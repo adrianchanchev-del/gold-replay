@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.10.1', BUILD = 'gr-v10b';
+  const APP_VERSION = '0.11.0', BUILD = 'gr-v11';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [5, '5m'], [15, '15m'], [60, '1h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -642,24 +642,27 @@
     $('#rv_note').oninput = check;
     go.onclick = () => submitReview(t, said, $('#rv_note').value.trim());
   }
+  E.confName = (c) => { try { return confLabel(c).name; } catch (x) { return c.id; } };
   function submitReview(t, said, note) {
     S.pending = null;
     const sc = E.scoreTrade(t, P.plan, { followed: said });
     const lvBefore = E.levelFor(P.xp);
-    const gain = Math.round(sc.total / 2) + (sc.adherence.level === 2 ? 10 : 0);
+    const gain = sc.total * 5 + sc.bonus * 2 + sc.honesty * 5 + (sc.mistake ? 0 : 10);
     P.xp += gain;
-    if (sc.adherence.level === 2) { P.streak++; P.bestStreak = Math.max(P.bestStreak, P.streak); } else P.streak = 0;
-    if (sc.verdict === 'honest') P.honest++;
-    P.journal.push({ t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc.total, parts: sc.parts, verdict: sc.verdict, said, level: sc.adherence.level,
+    if (!sc.mistake) { P.streak++; P.bestStreak = Math.max(P.bestStreak, P.streak); } else P.streak = 0;
+    if (sc.honesty >= 1) P.honest++;
+    P.journal.push({ t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc.total, max: sc.max, bonus: sc.bonus, honesty: sc.honesty, verdict: sc.verdict, said, level: sc.mistake ? 1 : 2,
       flags: { incomplete: sc.adherence.comp < 1, risk: !sc.adherence.riskOk, rr: !sc.adherence.rrOk, limits: !sc.adherence.limitsOk, widened: !sc.adherence.stopOk, manual: t.reason === 'MANUAL' }, note, why: t.note, comp: sc.adherence.comp });
     if (P.journal.length > 600) P.journal.shift();
     P.sessionsDone = P.sessionsDone || 0; saveP();
     const lvAfter = E.levelFor(P.xp);
-    const rows = [['Followed your checklist', sc.parts.plan, 40], ['Risk size within plan', sc.parts.risk, 15], ['Reward : risk met', sc.parts.rr, 10], ['Daily limits respected', sc.parts.limits, 5], ['Clean exit, no stop widening', sc.parts.exit, 15], ['Honest self-review', sc.parts.reflect, 15]];
-    const vtxt = { honest: 'Your self-assessment matches what the data shows. That is the skill.', overclaimed: 'You said you followed the plan, but the log says otherwise. That gap is where accounts get blown.', harsh: 'You were harder on yourself than the log. Good habit, just be accurate.' }[sc.verdict];
-    modal('<h3>Trade score: ' + sc.total + '/100</h3>' + rows.map((r) => '<div class="srow"><span>' + r[0] + '</span><b class="' + (r[1] >= r[2] ? 'up' : r[1] === 0 ? 'dn' : '') + '">' + r[1] + '/' + r[2] + '</b></div>').join('') +
-      '<p class="vt">' + vtxt + '</p><div class="xpline">+' + gain + ' XP &middot; Level ' + lvAfter + (lvAfter > lvBefore ? ' &#127881; LEVEL UP' : '') + ' &middot; Clean streak ' + P.streak + '</div>' +
-      '<button class="btn big" id="rs_ok">Continue</button>', 'tall nodismiss');
+    const vtxt = { clean: 'No mistake, and you said so. That is the most honest result there is.', accountable: 'You made a mistake and owned it. That is how it gets fixed.', overclaimed: 'You said you followed the plan, but the log says otherwise. That gap is where accounts get blown.', harsh: 'You did nothing wrong but marked yourself down. Be accurate, not harsh.' }[sc.verdict];
+    const hl = ['No honesty', 'Accountable', 'Fully honest'][sc.honesty];
+    modal('<h3>Score: ' + sc.total + '/' + sc.max + (sc.bonus ? ' <span class=\"up\">+' + sc.bonus + ' bonus</span>' : '') + '</h3>' +
+      sc.rows.map((r) => '<div class=\"srow\"><span>' + esc(r.label) + '</span><b class=\"' + (r.got >= r.max ? 'up' : 'dn') + '\">' + (r.bonus ? '+' : '') + r.got + (r.bonus ? '' : '/' + r.max) + '</b></div>').join('') +
+      '<div class=\"srow hon\"><span><b>Honesty</b> &middot; ' + hl + '</span><b class=\"' + (sc.honesty === 2 ? 'up' : sc.honesty === 0 ? 'dn' : '') + '\">' + sc.honesty + '/2</b></div>' +
+      '<p class=\"vt\">' + vtxt + '</p><div class=\"xpline\">+' + gain + ' XP &middot; Level ' + lvAfter + (lvAfter > lvBefore ? ' &#127881; LEVEL UP' : '') + ' &middot; Clean streak ' + P.streak + '</div>' +
+      '<button class=\"btn big\" id=\"rs_ok\">Continue</button>', 'tall nodismiss');
     $('#rs_ok').onclick = () => { closeModal(); drawTradebar(); const risk = (S.dayStartBal - S.balance) >= S.dayStartBal * P.plan.risk.dailyLoss / 100; if (risk) toast('Daily loss limit hit. Plan says stop for today.'); };
   }
 
@@ -675,12 +678,12 @@
   // ---------- stats ----------
   function renderStats() {
     const J = P.journal, n = J.length, lv = E.levelFor(P.xp), lo = E.xpForLevel(lv), hi = E.xpForLevel(lv + 1);
-    const wins = J.filter((j) => j.pnl > 0).length, avgS = n ? J.reduce((a, j) => a + j.score, 0) / n : 0;
-    const clean = J.filter((j) => j.level === 2).length, honest = J.filter((j) => j.verdict === 'honest').length;
+    const wins = J.filter((j) => j.pnl > 0).length, avgS = n ? J.reduce((a, j) => a + (j.max ? j.score / j.max * 100 : j.score), 0) / n : 0, avgH = J.filter((j) => j.honesty != null).length ? J.filter((j) => j.honesty != null).reduce((a, j) => a + j.honesty, 0) / J.filter((j) => j.honesty != null).length : 0;
+    const clean = J.filter((j) => j.level === 2).length, honest = J.filter((j) => j.honesty >= 1 || j.verdict === 'honest').length;
     const leaks = [['Skipped checklist items', J.filter((j) => j.flags.incomplete).length], ['Risked more than plan', J.filter((j) => j.flags.risk).length], ['Took below-minimum RR', J.filter((j) => j.flags.rr).length], ['Broke daily limits', J.filter((j) => j.flags.limits).length], ['Widened a stop', J.filter((j) => j.flags.widened).length], ['Closed manually', J.filter((j) => j.flags.manual).length], ['Overclaimed in review', J.filter((j) => j.verdict === 'overclaimed').length]].sort((a, b) => b[1] - a[1]);
     let h = '<div class="page"><div class="card lvl"><div class="lvn">Level ' + lv + '</div><div class="bar"><i style="width:' + Math.min(100, (P.xp - lo) / (hi - lo) * 100) + '%"></i></div><div class="muted sm">' + P.xp + ' XP &middot; ' + (hi - P.xp) + ' to level ' + (lv + 1) + '</div></div>' +
-      '<div class="kpis"><div><b>' + P.streak + '</b><span>clean streak</span></div><div><b>' + P.bestStreak + '</b><span>best</span></div><div><b>' + n + '</b><span>trades</span></div><div><b>' + (n ? Math.round(avgS) : 0) + '</b><span>avg score</span></div></div>' +
-      '<div class="kpis"><div><b>' + (n ? Math.round(clean / n * 100) : 0) + '%</b><span>fully on-plan</span></div><div><b>' + (n ? Math.round(honest / n * 100) : 0) + '%</b><span>honest reviews</span></div><div><b>' + (n ? Math.round(wins / n * 100) : 0) + '%</b><span>win rate</span></div><div><b>' + P.sessionsDone + '</b><span>sessions</span></div></div>';
+      '<div class="kpis"><div><b>' + P.streak + '</b><span>clean streak</span></div><div><b>' + P.bestStreak + '</b><span>best</span></div><div><b>' + n + '</b><span>trades</span></div><div><b>' + (n ? Math.round(avgS) : 0) + '</b><span>avg score %</span></div></div>' +
+      '<div class="kpis"><div><b>' + (n ? Math.round(clean / n * 100) : 0) + '%</b><span>fully on-plan</span></div><div><b>' + (n ? Math.round(honest / n * 100) : 0) + '%</b><span>honest reviews</span></div><div><b>' + (n ? Math.round(wins / n * 100) : 0) + '%</b><span>win rate</span></div><div><b>' + avgH.toFixed(1) + '/2</b><span>avg honesty</span></div></div>';
     if (n) h += '<div class="card"><b>Where you leak discipline</b>' + leaks.map((l) => '<div class="srow"><span>' + l[0] + '</span><b class="' + (l[1] ? 'dn' : 'up') + '">' + l[1] + '</b></div>').join('') + '</div>';
     h += '<h3>Journal</h3>' + (n ? J.slice().reverse().slice(0, 60).map((j) => '<div class="card jr"><div class="jt"><b>' + (j.dir > 0 ? 'LONG' : 'SHORT') + '</b> <span class="muted sm">' + fdate(j.t0) + '</span><span class="sc">' + j.score + '</span></div><div class="' + (j.pnl >= 0 ? 'up' : 'dn') + '">' + fmt(j.pnl) + ' (' + j.r.toFixed(2) + 'R) &middot; ' + j.reason + '</div><div class="muted sm">You said: ' + j.said + ' &middot; verdict: ' + j.verdict + '</div><div class="sm">' + esc(j.note) + '</div></div>').join('') : '<p class="muted">No trades yet. Go place one.</p>') + '</div>';
     $('#view').innerHTML = h;

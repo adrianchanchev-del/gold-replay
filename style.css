@@ -146,3 +146,5 @@ input,textarea,select{-webkit-user-select:text;user-select:text}
 .island{bottom:34px}
 .tf.ind{color:#8b95a5}
 .info{font-size:12px}.info .il{gap:6px}.info .ir{gap:7px}
+
+.srow.hon{border-top:1px solid #2a3140;margin-top:6px;padding-top:8px}

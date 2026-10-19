@@ -178,10 +178,11 @@
   };
 
   // ---- process scoring ----
+  // checklist completeness = steps + must-have confluences + no-go list (optional confluences are bonus only)
   E.completeness = function (plan, check) {
     let got = 0, tot = 0;
     plan.steps.forEach((_, i) => { tot += 1; if (check.steps[i]) got += 1; });
-    plan.conf.forEach((c, i) => { const w = c.required ? 2 : 1; tot += w; if (check.conf[i]) got += w; });
+    plan.conf.forEach((c, i) => { if (c.required) { tot += 1; if (check.conf[i]) got += 1; } });
     plan.avoid.forEach((_, i) => { tot += 1; if (check.avoid[i]) got += 1; });
     return tot ? got / tot : 1;
   };
@@ -200,24 +201,29 @@
     return { comp, riskOk, rrOk, limitsOk, stopOk, exitClean, level };
   };
 
+  // Every point is intentional: 1 point per item, honesty graded 0-2 on its own.
   E.scoreTrade = function (tr, plan, review) {
-    const a = E.adherence(tr, plan);
-    const parts = {
-      plan: Math.round(40 * a.comp),
-      risk: a.riskOk ? 15 : 0,
-      rr: a.rrOk ? 10 : 0,
-      limits: a.limitsOk ? 5 : 0,
-      exit: !a.stopOk ? 0 : (a.exitClean ? 15 : 8),
-      reflect: 0,
-    };
-    const said = { yes: 2, partly: 1, no: 0 }[review.followed];
-    const diff = said - a.level;
-    let verdict;
-    if (diff === 0) { parts.reflect = 15; verdict = 'honest'; }
-    else if (diff > 0) { parts.reflect = 0; verdict = 'overclaimed'; }
-    else { parts.reflect = diff === -1 ? 8 : 3; verdict = 'harsh'; }
-    const total = parts.plan + parts.risk + parts.rr + parts.limits + parts.exit + parts.reflect;
-    return { total, parts, adherence: a, verdict };
+    const a = E.adherence(tr, plan), ck = tr.check, rows = [];
+    const add = (label, got, max, bonus) => rows.push({ label, got, max, bonus: !!bonus });
+    plan.steps.forEach((s, i) => add('Step: ' + s, ck.steps[i] ? 1 : 0, 1));
+    const must = plan.conf.map((c, i) => [c, i]).filter((x) => x[0].required);
+    if (must.length) add('Must-have confluences (all)', must.every((x) => ck.conf[x[1]]) ? 1 : 0, 1);
+    if (plan.avoid.length) add('Avoided your no-go list (all)', plan.avoid.every((_, i) => ck.avoid[i]) ? 1 : 0, 1);
+    add('Risk size within plan', a.riskOk ? 1 : 0, 1);
+    add('Reward : risk met', a.rrOk ? 1 : 0, 1);
+    add('Daily limits respected', a.limitsOk ? 1 : 0, 1);
+    add('Clean exit, no stop widening', a.stopOk ? 1 : 0, 1);
+    const base = rows.reduce((s, r) => s + r.got, 0), max = rows.reduce((s, r) => s + r.max, 0);
+    const bonusRows = plan.conf.map((c, i) => [c, i]).filter((x) => !x[0].required && ck.conf[x[1]]);
+    bonusRows.forEach((x) => add('Bonus: ' + (x[0].name || (E.confName ? E.confName(x[0]) : x[0].id)), 1, 1, true));
+    const bonus = bonusRows.length;
+    const mistake = base < max;
+    const said = review.followed; // yes = no mistake claimed, partly/no = admits one
+    let honesty, verdict;
+    if (!mistake) { if (said === 'yes') { honesty = 2; verdict = 'clean'; } else { honesty = 1; verdict = 'harsh'; } }
+    else if (said === 'yes') { honesty = 0; verdict = 'overclaimed'; }
+    else { honesty = 1; verdict = 'accountable'; }
+    return { total: base, max, bonus, honesty, rows, mistake, adherence: a, verdict, parts: {} };
   };
 
   E.levelFor = (xp) => Math.floor(Math.sqrt(xp / 100)) + 1;
