@@ -16,7 +16,7 @@
   };
   E.n = () => N;
   E.t = (i) => A[i * 6];
-  E.bar = (i) => ({ t: A[i * 6], o: A[i * 6 + 1] / 100, h: A[i * 6 + 2] / 100, l: A[i * 6 + 3] / 100, c: A[i * 6 + 4] / 100 });
+  E.bar = (i) => ({ t: A[i * 6], o: A[i * 6 + 1] / 100, h: A[i * 6 + 2] / 100, l: A[i * 6 + 3] / 100, c: A[i * 6 + 4] / 100, v: A[i * 6 + 5] });
   E.close = (i) => A[i * 6 + 4] / 100;
 
   // largest index with t <= tmin, or -1
@@ -38,9 +38,10 @@
       if (b !== curB) {
         if (c) { out.push(c); if (out.length >= count) { c = null; break; } }
         curB = b;
-        c = { time: b * tf * 60, open: A[i * 6 + 1] / 100, high: A[i * 6 + 2] / 100, low: A[i * 6 + 3] / 100, close: A[i * 6 + 4] / 100 };
+        c = { time: b * tf * 60, open: A[i * 6 + 1] / 100, high: A[i * 6 + 2] / 100, low: A[i * 6 + 3] / 100, close: A[i * 6 + 4] / 100, volume: A[i * 6 + 5] };
       } else {
         c.open = A[i * 6 + 1] / 100;
+        c.volume += A[i * 6 + 5];
         const h = A[i * 6 + 2] / 100, l = A[i * 6 + 3] / 100;
         if (h > c.high) c.high = h;
         if (l < c.low) c.low = l;
@@ -60,9 +61,61 @@
       if (b.h > c.high) c.high = b.h;
       if (b.l < c.low) c.low = b.l;
       c.close = b.c;
+      c.volume += b.v;
       return c;
     }
-    return { time, open: b.o, high: b.h, low: b.l, close: b.c };
+    return { time, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v };
+  };
+
+
+  // ---- indicators (inputs: array of candles {time,open,high,low,close,volume}) ----
+  E.sma = function (cs, p) {
+    const out = []; let sum = 0;
+    for (let i = 0; i < cs.length; i++) {
+      sum += cs[i].close; if (i >= p) sum -= cs[i - p].close;
+      if (i >= p - 1) out.push({ time: cs[i].time, value: sum / p });
+    }
+    return out;
+  };
+  E.ema = function (cs, p) {
+    const out = [], k = 2 / (p + 1); let e = 0;
+    for (let i = 0; i < cs.length; i++) {
+      if (i < p - 1) { e += cs[i].close; continue; }
+      if (i === p - 1) { e = (e + cs[i].close) / p; } else e = cs[i].close * k + e * (1 - k);
+      out.push({ time: cs[i].time, value: e });
+    }
+    return out;
+  };
+  E.bb = function (cs, p, m) {
+    const mid = [], up = [], lo = [];
+    for (let i = p - 1; i < cs.length; i++) {
+      let s = 0; for (let j = i - p + 1; j <= i; j++) s += cs[j].close;
+      const mean = s / p; let v = 0; for (let j = i - p + 1; j <= i; j++) v += (cs[j].close - mean) * (cs[j].close - mean);
+      const sd = Math.sqrt(v / p), t = cs[i].time;
+      mid.push({ time: t, value: mean }); up.push({ time: t, value: mean + m * sd }); lo.push({ time: t, value: mean - m * sd });
+    }
+    return { mid, up, lo };
+  };
+  E.rsi = function (cs, p) {
+    const out = []; let ag = 0, al = 0;
+    for (let i = 1; i < cs.length; i++) {
+      const d = cs[i].close - cs[i - 1].close, g = d > 0 ? d : 0, l = d < 0 ? -d : 0;
+      if (i <= p) { ag += g / p; al += l / p; if (i < p) continue; }
+      else { ag = (ag * (p - 1) + g) / p; al = (al * (p - 1) + l) / p; }
+      out.push({ time: cs[i].time, value: al === 0 ? 100 : 100 - 100 / (1 + ag / al) });
+    }
+    return out;
+  };
+  // session VWAP, resets each UTC day
+  E.vwap = function (cs) {
+    const out = []; let day = -1, pv = 0, vv = 0;
+    for (const c of cs) {
+      const d = Math.floor(c.time / 86400);
+      if (d !== day) { day = d; pv = 0; vv = 0; }
+      const v = c.volume || 1; pv += (c.high + c.low + c.close) / 3 * v; vv += v;
+      out.push({ time: c.time, value: pv / vv });
+    }
+    return out;
   };
 
   // ---- sizing & trades ----

@@ -6,7 +6,7 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [5, '5m'], [15, '15m'], [60, '1h'], [240, '4h'], [1440, '1D']];
-  const SPEEDS = [1, 5, 15, 60];
+  const SPEEDS = [1, 2, 5, 15, 60];
   const fmt = (n, d = 2) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
   const fdate = (tmin) => new Date(tmin * 60000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 
@@ -69,7 +69,7 @@
     const idx = await (await fetch('data-index.json')).json();
     let done = 0;
     const bufs = await Promise.all(idx.chunks.map(async (c) => {
-      const r = await fetch('data-' + c.f); const b = await r.arrayBuffer();
+      const r = await fetch(c.f); const b = await r.arrayBuffer();
       done++; $('#pbar').style.width = (done / idx.chunks.length * 100) + '%';
       return b;
     }));
@@ -79,12 +79,14 @@
   // ---------- boot ----------
   async function boot() {
     P = loadP() || newProfile();
+    if (!P.ind) P.ind = [{ type: 'ema', p: 20, on: true, color: PALETTE[0] }, { type: 'vol', p: 0, on: true, color: IND.vol[2] }];
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     try { await loadData(); } catch (e) {
       $('#app').innerHTML = '<div class="center"><h2>Could not load data</h2><p class="muted">' + esc(e.message) + '</p><button class="btn" onclick="location.reload()">Retry</button></div>';
       return;
     }
     if (!P.plan) { startWizard(false); return; }
+    if (P.session && P.session.dv !== DV) { P.session = null; saveP(); }
     S = P.session;
     showTab('replay');
   }
@@ -239,52 +241,79 @@
   }
 
   // ---------- session start ----------
+  const DV = 'duka-1';
+  const SESSIONS = [['Asia', 0], ['London', 7], ['New York', 13]]; // UTC start hours
+  const sessName = (tmin) => { const h = Math.floor((tmin % 1440) / 60); return h < 7 ? 'Asia' : h < 13 ? 'London' : h < 21 ? 'New York' : 'Late'; };
+  const fmtDay = (d) => new Date(d * 86400000).toUTCString().slice(0, 16);
+  function dayList() {
+    const out = [], d0 = Math.floor(E.t(0) / 1440), d1 = Math.floor(E.t(E.n() - 1) / 1440);
+    for (let d = d0; d <= d1; d++) {
+      const a = E.find(d * 1440 - 1), b = E.find(d * 1440 + 1439);
+      if (b - a >= 300) out.push(d);
+    }
+    return out;
+  }
+  function startIdx(day, hour) {
+    const tm = day * 1440 + hour * 60, i = E.find(tm - 1) + 1;
+    if (i >= E.n() || E.t(i) - tm > 180) return -1;
+    return i >= 120 && i < E.n() - 120 ? i : -1;
+  }
+  let selDay = null, selSess = 1;
   function renderStart() {
-    const first = E.t(0), last = E.t(E.n() - 1);
-    $('#view').innerHTML = '<div class="page"><h2>New session</h2><p class="muted">You get real gold history up to a start point. The future is hidden. Everything after is revealed one candle at a time.</p>' +
-      '<div class="card"><label>Starting balance</label><input id="s_bal" type="number" inputmode="decimal" value="' + P.plan.balance + '">' +
-      '<label>Start date (optional, UTC). Blank = random weekday since Apr 2025. Before 2025 the gold data is thin: many 1m candles are flat</label><input id="s_date" type="date" min="' + new Date((first + 43200) * 60000).toISOString().slice(0, 10) + '" max="' + new Date((last - 20160) * 60000).toISOString().slice(0, 10) + '">' +
-      '<button class="btn big" id="s_go">Begin</button></div>' +
-      '<div class="card"><b>Reminder: your risk rules</b><div class="muted">' + P.plan.risk.pct + '% per trade &middot; min RR ' + P.plan.risk.minRR + ' &middot; ' + P.plan.risk.maxTrades + ' trades/day &middot; ' + P.plan.risk.dailyLoss + '% daily loss limit</div></div></div>';
-    $('#s_go').onclick = () => {
-      const bal = Math.max(100, +$('#s_bal').value || 1000), d = $('#s_date').value;
-      let idx = -1;
-      if (d) {
-        const tm = Date.parse(d + 'T07:00:00Z') / 60000; idx = E.find(tm);
-        if (idx < 0 || tm - E.t(idx) > 2880) { toast('No data near that date'); return; }
-      } else {
-        for (let k = 0; k < 60 && idx < 0; k++) {
-          const lo = Math.max(first + 43200, Date.UTC(2025, 3, 1) / 60000), hi = last - 20160;
-          const day = Math.floor((lo + Math.random() * (hi - lo)) / 1440);
-          const wd = new Date(day * 86400000).getUTCDay();
-          if (wd === 0 || wd === 6) continue;
-          const tm = day * 1440 + 420, i = E.find(tm);
-          if (i >= 0 && Math.abs(E.t(i) - tm) <= 5) idx = i;
-        }
-        if (idx < 0) { toast('Try again'); return; }
-      }
-      const t = E.t(idx);
-      S = P.session = { cur: idx, tf: P.plan.tfs.length ? (TFS.find((x) => x[1] === P.plan.tfs[0]) || TFS[3])[0] : 60, startBal: bal, balance: bal, trades: 0, open: null, dayKey: Math.floor(t / 1440), dayStartBal: bal, dayTrades: 0, startT: t };
-      saveP(); renderReplay();
+    const days = dayList().filter((d) => SESSIONS.some((s) => startIdx(d, s[1]) >= 0));
+    if (!days.length) { $('#view').innerHTML = '<div class="page"><h2>No data</h2></div>'; return; }
+    if (selDay == null || !days.includes(selDay)) selDay = days[days.length - 1];
+    const d0 = fmtDay(days[0]), d1 = fmtDay(days[days.length - 1]);
+    $('#view').innerHTML = '<div class="page"><h2>New session</h2><p class="muted">Real spot gold (XAUUSD) 1-minute data. The future is hidden and revealed as you step forward.</p>' +
+      '<div class="card"><label>Day</label><select id="s_day">' + days.slice().reverse().map((d) => '<option value="' + d + '"' + (d === selDay ? ' selected' : '') + '>' + fmtDay(d) + '</option>').join('') + '</select>' +
+      '<label>Session (UTC start time)</label><div class="chips" id="s_sess"></div>' +
+      '<label>Starting balance</label><input id="s_bal" type="number" inputmode="decimal" value="' + P.plan.balance + '">' +
+      '<button class="btn big" id="s_go">Begin session</button><button class="btn ghost big" id="s_rand">Random day and session</button>' +
+      '<p class="muted sm">Data: ' + d0.slice(5) + ' to ' + d1.slice(5) + ' &middot; ' + days.length + ' trading days &middot; more days are added automatically.</p></div>' +
+      '<div class="card"><b>Your risk rules</b><div class="muted">' + P.plan.risk.pct + '% per trade &middot; min RR ' + P.plan.risk.minRR + ' &middot; ' + P.plan.risk.maxTrades + ' trades/day &middot; ' + P.plan.risk.dailyLoss + '% daily loss limit</div></div></div>';
+    const drawSess = () => {
+      if (startIdx(selDay, SESSIONS[selSess][1]) < 0) selSess = SESSIONS.findIndex((s) => startIdx(selDay, s[1]) >= 0);
+      $('#s_sess').innerHTML = SESSIONS.map((s, i) => { const ok = startIdx(selDay, s[1]) >= 0; return '<span class="chip ' + (i === selSess ? 'on' : '') + (ok ? '' : ' dis') + '" data-sess="' + i + '">' + s[0] + ' ' + String(s[1]).padStart(2, '0') + ':00</span>'; }).join('');
+      document.querySelectorAll('[data-sess]').forEach((el) => (el.onclick = () => { if (el.classList.contains('dis')) { toast('No data for that session'); return; } selSess = +el.dataset.sess; drawSess(); }));
     };
+    drawSess();
+    $('#s_day').onchange = () => { selDay = +$('#s_day').value; drawSess(); };
+    $('#s_rand').onclick = () => {
+      const opts = []; days.forEach((d) => SESSIONS.forEach((s, i) => { if (startIdx(d, s[1]) >= 0) opts.push([d, i]); }));
+      const pick = opts[Math.floor(Math.random() * opts.length)]; selDay = pick[0]; selSess = pick[1]; begin();
+    };
+    $('#s_go').onclick = begin;
+    function begin() {
+      const bal = Math.max(100, +$('#s_bal').value || 1000), idx = startIdx(selDay, SESSIONS[selSess][1]);
+      if (idx < 0) { toast('No data for that session'); return; }
+      const t = E.t(idx);
+      S = P.session = { dv: DV, cur: idx, tf: 15, startBal: bal, balance: bal, trades: 0, open: null, dayKey: Math.floor(t / 1440), dayStartBal: bal, dayTrades: 0, startT: t };
+      saveP(); showTab('replay');
+    }
   }
 
   // ---------- replay ----------
-  function destroyChart() { if (chart) { try { chart.remove(); } catch (e) {} chart = null; series = null; lines = []; } }
+  let HIST = [], IS = [];
+  const IND = { ema: ['EMA', 20, '#e6c14b'], sma: ['SMA', 50, '#4f8cff'], bb: ['Bollinger Bands', 20, '#9b8cff'], vwap: ['VWAP', 0, '#ff9f43'], rsi: ['RSI', 14, '#c792ea'], vol: ['Volume', 0, '#5c6b7f'] };
+  const PALETTE = ['#e6c14b', '#4f8cff', '#ff9f43', '#c792ea', '#5ad1c4', '#ff6f91'];
+  function destroyChart() { if (chart) { try { chart.remove(); } catch (e) {} chart = null; series = null; lines = []; IS = []; } }
 
   function renderReplay() {
     const tfBtns = TFS.map((t) => '<button class="tf ' + (S.tf === t[0] ? 'on' : '') + '" data-tfs="' + t[0] + '">' + t[1] + '</button>').join('');
-    $('#view').innerHTML = '<div class="rp"><div class="hud"><div><div id="h_time" class="muted sm"></div><div id="h_price" class="price"></div></div>' +
+    $('#view').innerHTML = '<div class="rp"><div class="hud"><div><div class="muted sm"><span id="h_time"></span> <span id="h_sess" class="stag"></span></div><div id="h_price" class="price"></div></div>' +
       '<div class="hr"><div class="muted sm">Balance</div><div id="h_bal"></div></div><div class="hr"><div class="muted sm">Equity</div><div id="h_eq"></div></div></div>' +
-      '<div id="chart"></div><div class="tfrow">' + tfBtns + '</div>' +
-      '<div class="ctl"><button id="c_step">+1m</button><button id="c_next">Next candle</button><button id="c_play">Play</button><button id="c_speed">1x</button><button id="c_end" title="End session">End</button></div>' +
+      '<div id="chart"></div><div class="tfrow">' + tfBtns + '<button class="tf ind" id="c_ind">&fnof;x</button></div>' +
+      '<div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next">Next<br>candle</button><button id="c_step">+1m</button><button id="c_sess">Next<br>session</button><button id="c_speed">1x</button><button id="c_end">End</button></div>' +
       '<div id="tradebar"></div></div>';
     mountChart(); loadTF();
-    document.querySelectorAll('[data-tfs]').forEach((b) => b.onclick = () => { S.tf = +b.dataset.tfs; document.querySelectorAll('.tf').forEach((x) => x.classList.toggle('on', x === b)); loadTF(); saveP(); });
+    document.querySelectorAll('[data-tfs]').forEach((b) => (b.onclick = () => { S.tf = +b.dataset.tfs; document.querySelectorAll('.tf[data-tfs]').forEach((x) => x.classList.toggle('on', x === b)); loadTF(); saveP(); }));
     $('#c_step').onclick = () => { pause(); advance(1); };
     $('#c_next').onclick = () => { pause(); nextCandle(); };
+    $('#c_sess').onclick = () => { pause(); nextSession(); };
     $('#c_play').onclick = () => (timer ? pause() : play());
+    $('#c_speed').textContent = SPEEDS[speedI] + 'x';
     $('#c_speed').onclick = () => { speedI = (speedI + 1) % SPEEDS.length; $('#c_speed').textContent = SPEEDS[speedI] + 'x'; };
+    $('#c_ind').onclick = () => { pause(); openInd(); };
     $('#c_end').onclick = endSession;
     drawTradebar(); refreshHud(); drawLines();
   }
@@ -292,60 +321,127 @@
     destroyChart();
     const LW = window.LightweightCharts;
     chart = LW.createChart($('#chart'), {
-      autoSize: true, layout: { background: { color: '#0d1117' }, textColor: '#8b95a5', fontSize: 11 },
-      grid: { vertLines: { color: '#151b24' }, horzLines: { color: '#151b24' } },
-      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: '#222a35', barSpacing: 9, minBarSpacing: 3, fixLeftEdge: false },
-      rightPriceScale: { borderColor: '#222a35' }, crosshair: { mode: 0 },
+      autoSize: true, layout: { background: { color: '#131722' }, textColor: '#9aa4b2', fontSize: 11, panes: { separatorColor: '#2a2e39' } },
+      grid: { vertLines: { color: '#1b2030' }, horzLines: { color: '#1b2030' } },
+      localization: { priceFormatter: (p) => p.toFixed(2) },
+      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: '#2a2e39', barSpacing: 9, minBarSpacing: 3 },
+      rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.08 } }, crosshair: { mode: 0 },
     });
-    series = chart.addSeries(LW.CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineVisible: true });
+    series = chart.addSeries(LW.CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineVisible: true, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } });
   }
   function loadTF() {
-    const data = E.candles(S.tf, S.cur, 400);
-    series.setData(data); S.run = data[data.length - 1] ? Object.assign({}, data[data.length - 1]) : null;
-    chart.timeScale().applyOptions({ barSpacing: 9 }); chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 55), to: data.length + 6 });
+    HIST = E.candles(S.tf, S.cur, 700);
+    series.setData(HIST); S.run = HIST[HIST.length - 1] || null;
+    buildInd();
+    chart.timeScale().applyOptions({ barSpacing: 9 });
+    chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, HIST.length - 60), to: HIST.length + 6 });
   }
+
+  // ---- indicators ----
+  function clearInd() { IS.forEach((x) => x.s.forEach((s) => { try { chart.removeSeries(s); } catch (e) {} })); IS = []; }
+  function buildInd() {
+    clearInd(); if (!chart) return;
+    const LW = window.LightweightCharts, base = { priceLineVisible: false, lastValueVisible: false, lineWidth: 1, crosshairMarkerVisible: false };
+    (P.ind || []).forEach((d) => {
+      if (!d.on) return;
+      let s;
+      if (d.type === 'ema' || d.type === 'sma' || d.type === 'vwap') s = [chart.addSeries(LW.LineSeries, Object.assign({ color: d.color }, base))];
+      else if (d.type === 'bb') s = [chart.addSeries(LW.LineSeries, Object.assign({ color: d.color }, base)), chart.addSeries(LW.LineSeries, Object.assign({ color: d.color, lineStyle: 2 }, base)), chart.addSeries(LW.LineSeries, Object.assign({ color: d.color }, base))];
+      else if (d.type === 'rsi') {
+        const r = chart.addSeries(LW.LineSeries, Object.assign({ color: d.color }, base, { lastValueVisible: true }), 1);
+        [30, 70].forEach((v) => r.createPriceLine({ price: v, color: '#3a4152', lineWidth: 1, lineStyle: 2, axisLabelVisible: false }));
+        s = [r];
+      } else if (d.type === 'vol') {
+        const v = chart.addSeries(LW.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', priceLineVisible: false, lastValueVisible: false });
+        v.priceScale().applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } }); s = [v];
+      }
+      if (s) IS.push({ d, s });
+    });
+    try { const ps = chart.panes(); if (ps[1]) ps[1].setStretchFactor(0.4); } catch (e) {}
+    updateInd();
+  }
+  function updateInd() {
+    if (!IS.length || !HIST.length) return;
+    IS.forEach(({ d, s }) => {
+      if (d.type === 'ema') s[0].setData(E.ema(HIST, d.p));
+      else if (d.type === 'sma') s[0].setData(E.sma(HIST, d.p));
+      else if (d.type === 'vwap') s[0].setData(E.vwap(HIST));
+      else if (d.type === 'rsi') s[0].setData(E.rsi(HIST, d.p));
+      else if (d.type === 'bb') { const b = E.bb(HIST, d.p, 2); s[0].setData(b.up); s[1].setData(b.mid); s[2].setData(b.lo); }
+      else if (d.type === 'vol') s[0].setData(HIST.map((c) => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(38,166,154,.45)' : 'rgba(239,83,80,.45)' })));
+    });
+  }
+  function openInd() {
+    P.ind = P.ind || [];
+    const draw = () => {
+      modal('<h3>Indicators</h3>' + (P.ind.length ? P.ind.map((d, i) => '<div class="indrow"><label class="inl"><input type="checkbox" data-ion="' + i + '" ' + (d.on ? 'checked' : '') + '> <span style="color:' + d.color + '">&#9679;</span> ' + IND[d.type][0] + '</label>' +
+        (IND[d.type][1] ? '<input class="pin" type="number" inputmode="numeric" min="2" max="500" data-ip="' + i + '" value="' + d.p + '">' : '<span></span>') + '<button class="x" data-idel="' + i + '">&times;</button></div>').join('') : '<p class="muted">None added.</p>') +
+        '<h4>Add</h4><div class="chips">' + Object.keys(IND).map((k) => '<span class="chip add" data-iadd="' + k + '">+ ' + IND[k][0] + '</span>').join('') + '</div>' +
+        '<button class="btn big" id="i_done">Done</button>', 'tall');
+      document.querySelectorAll('[data-ion]').forEach((el) => (el.onchange = () => { P.ind[+el.dataset.ion].on = el.checked; apply(); }));
+      document.querySelectorAll('[data-ip]').forEach((el) => (el.onchange = () => { P.ind[+el.dataset.ip].p = Math.max(2, Math.min(500, Math.floor(+el.value) || 2)); apply(); }));
+      document.querySelectorAll('[data-idel]').forEach((el) => (el.onclick = () => { P.ind.splice(+el.dataset.idel, 1); apply(); draw(); }));
+      document.querySelectorAll('[data-iadd]').forEach((el) => (el.onclick = () => { const k = el.dataset.iadd; P.ind.push({ type: k, p: IND[k][1], on: true, color: k === 'vol' || k === 'rsi' || k === 'vwap' || k === 'bb' ? IND[k][2] : PALETTE[P.ind.length % PALETTE.length] }); apply(); draw(); }));
+      $('#i_done').onclick = closeModal;
+    };
+    const apply = () => { saveP(); buildInd(); };
+    draw();
+  }
+
   function dayRoll() {
     const dk = Math.floor(E.t(S.cur) / 1440);
     if (dk !== S.dayKey) { S.dayKey = dk; S.dayStartBal = S.balance; S.dayTrades = 0; }
   }
+  function sync(crossed, stepped) {
+    if (!stepped || !series) return;
+    if (crossed || stepped > 1) series.setData(HIST); else series.update(S.run);
+    updateInd();
+  }
   function advance(n) {
+    let crossed = false, stepped = 0;
     for (let k = 0; k < n; k++) {
-      if (S.cur >= E.n() - 1) { pause(); toast('End of data'); break; }
-      S.cur++;
+      if (S.cur >= E.n() - 1) { pause(); toast('End of loaded data'); break; }
+      S.cur++; stepped++;
       S.run = E.mergeBar(S.run, S.tf, S.cur);
-      series.update(S.run);
+      const last = HIST[HIST.length - 1];
+      if (!last || last.time !== S.run.time) { HIST.push(S.run); crossed = true; if (HIST.length > 800) HIST.shift(); } else HIST[HIST.length - 1] = S.run;
       dayRoll();
       if (S.open) {
         const r = E.stepTrade(S.open, S.cur);
-        if (r) { finishTrade(r.price, E.t(S.cur), r.reason); break; }
+        if (r) { sync(crossed, stepped); finishTrade(r.price, E.t(S.cur), r.reason); return; }
       }
     }
-    refreshHud();
+    sync(crossed, stepped); refreshHud();
   }
   function nextCandle() {
-    const b0 = Math.floor(E.t(S.cur) / S.tf), cur0 = S.cur;
-    for (let k = 0; k < 6000 && S.cur < E.n() - 1; k++) {
-      const before = S.cur; advance(1);
-      if (!S.open && S.cur === before) break;
-      if (Math.floor(E.t(S.cur) / S.tf) !== b0) break;
-      if (!S.open && P.session !== S) break;
-      if ($('#modal').classList.contains('on')) break;
-    }
+    const tf = S.tf, b = Math.floor(E.t(S.cur) / tf);
+    let tgt = S.cur;
+    for (let k = 0; k < 8 && tgt <= S.cur; k++) tgt = E.find((b + 1 + k) * tf - 1);
+    if (tgt <= S.cur) tgt = Math.min(S.cur + 1, E.n() - 1);
+    advance(tgt - S.cur);
+  }
+  function nextSession() {
+    const t = E.t(S.cur), d = Math.floor(t / 1440);
+    let target = null;
+    for (let k = 0; k < 3 && target == null; k++) for (const s of SESSIONS) { const c = (d + k) * 1440 + s[1] * 60; if (c > t) { target = c; break; } }
+    const idx = E.find(target - 1) + 1;
+    if (idx <= S.cur) { toast('No more data'); return; }
+    advance(Math.min(idx, E.n() - 1) - S.cur);
   }
   function play() {
     if (timer) return;
-    $('#c_play').textContent = 'Pause'; $('#c_play').classList.add('on');
-    timer = setInterval(() => advance(SPEEDS[speedI]), 110);
+    const b = $('#c_play'); b.innerHTML = '&#10074;&#10074;'; b.classList.add('on');
+    timer = setInterval(() => advance(SPEEDS[speedI]), 300);
   }
   function pause() {
     if (timer) { clearInterval(timer); timer = null; }
-    const b = $('#c_play'); if (b) { b.textContent = 'Play'; b.classList.remove('on'); }
+    const b = $('#c_play'); if (b) { b.innerHTML = '&#9654;'; b.classList.remove('on'); }
     if (S) saveP();
   }
   function equity() { return S.balance + (S.open ? E.floating(S.open, E.close(S.cur)) : 0); }
   function refreshHud() {
     if (!$('#h_price')) return;
-    $('#h_time').textContent = fdate(E.t(S.cur));
+    $('#h_time').textContent = fdate(E.t(S.cur)); $('#h_sess').textContent = sessName(E.t(S.cur));
     $('#h_price').textContent = E.close(S.cur).toFixed(2);
     $('#h_bal').textContent = fmt(S.balance);
     const eq = equity(); const el = $('#h_eq'); el.textContent = fmt(eq); el.className = eq >= S.balance ? 'up' : 'dn';
