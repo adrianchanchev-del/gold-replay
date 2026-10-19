@@ -1,4 +1,4 @@
-const V='gr-v7';
+const V='gr-v8';
 const CORE=['./','index.html','style.css','app.js','engine.js','patterns.js','lightweight-charts.js','manifest.json','icon-192.png','icon-180.png','data-index.json'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(CORE.map(u=>new Request(u,{cache:'reload'})))).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});

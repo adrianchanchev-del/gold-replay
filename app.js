@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.7.0', BUILD = 'gr-v7';
+  const APP_VERSION = '0.8.0', BUILD = 'gr-v8';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [5, '5m'], [15, '15m'], [60, '1h'], [240, '4h'], [1440, '1D']];
   const SPEEDS = [1, 2, 5, 15, 60];
@@ -306,7 +306,7 @@
     const tfBtns = TFS.map((t) => '<button class="tf ' + (S.tf === t[0] ? 'on' : '') + '" data-tfs="' + t[0] + '">' + t[1] + '</button>').join('');
     $('#view').innerHTML = '<div class="rp"><div class="hud"><div><div class="muted sm"><span id="h_time"></span> <span id="h_sess" class="stag"></span></div><div id="h_price" class="price"></div></div>' +
       '<div class="hr"><div class="muted sm">Balance</div><div id="h_bal"></div></div><div class="hr"><div class="muted sm">Equity</div><div id="h_eq"></div></div></div>' +
-      '<div id="chart"></div><div class="tfrow">' + tfBtns + '<button class="tf ind" id="c_ind">&fnof;x</button></div>' +
+      '<div id="chartwrap"><div id="chart"></div><div id="hnd"></div></div><div class="tfrow">' + tfBtns + '<button class="tf ind" id="c_ind">&fnof;x</button></div>' +
       '<div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next">Next<br>candle</button><button id="c_step">+1m</button><button id="c_sess">Next<br>session</button><button id="c_speed">1x</button><button id="c_end">End</button></div>' +
       '<div id="tradebar"></div></div>';
     mountChart(); loadTF();
@@ -320,6 +320,7 @@
     $('#c_ind').onclick = () => { pause(); openInd(); };
     $('#c_end').onclick = endSession;
     drawTradebar(); refreshHud(); drawLines();
+    if (S.pending) (S.pending.check ? resultStep(S.pending) : checklistStep(S.pending));
   }
   function mountChart() {
     destroyChart();
@@ -447,28 +448,117 @@
     if (!$('#h_price')) return;
     $('#h_time').textContent = fdate(E.t(S.cur)); $('#h_sess').textContent = sessName(E.t(S.cur));
     $('#h_price').textContent = E.close(S.cur).toFixed(2);
-    $('#h_bal').textContent = fmt(S.balance);
-    const eq = equity(); const el = $('#h_eq'); el.textContent = fmt(eq); el.className = eq >= S.balance ? 'up' : 'dn';
+    const masked = S.pending && !S.pending.check;
+    $('#h_bal').textContent = masked ? '\u2022\u2022\u2022\u2022' : fmt(S.balance);
+    const eq = equity(); const el = $('#h_eq'); el.textContent = masked ? '\u2022\u2022\u2022\u2022' : fmt(eq); el.className = masked ? '' : (eq >= S.balance ? 'up' : 'dn');
     if (S.open) updateOpenPanel();
   }
 
   // ---------- trade bar / lines ----------
+  let lineObjs = {}, trackId = 0, drag = null;
+  const isSetup = (t) => S.cur <= (t.i0 == null ? -1 : t.i0);
+  function refit() { try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
+
   function drawLines() {
     if (!series) return;
-    lines.forEach((l) => { try { series.removePriceLine(l); } catch (e) {} }); lines = [];
-    const t = S && S.open; if (!t) return;
-    const mk = (price, color, title) => lines.push(series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
-    mk(t.entry, '#e6c14b', 'ENTRY'); mk(t.sl, '#ef5350', 'SL'); if (t.tp) mk(t.tp, '#26a69a', 'TP');
+    Object.keys(lineObjs).forEach((k) => { try { series.removePriceLine(lineObjs[k]); } catch (e) {} });
+    lineObjs = {};
+    const hn = $('#hnd'), t = S && S.open;
+    if (!t) { if (hn) hn.innerHTML = ''; refit(); return; }
+    const mk = (price, color, title) => series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title });
+    lineObjs.entry = mk(t.entry, '#e6c14b', 'ENTRY');
+    lineObjs.sl = mk(t.sl, '#ef5350', 'SL');
+    if (t.tp) lineObjs.tp = mk(t.tp, '#26a69a', 'TP');
+    if (hn && !hn.firstChild) buildHandles(hn);
+    refit();
+    if (!trackId) trackId = requestAnimationFrame(track);
   }
+
+  // ---- draggable SL / TP pills ----
+  function buildHandles(hn) {
+    hn.innerHTML = '<div class="hd sl" data-hd="sl"><span></span></div><div class="hd tp" data-hd="tp"><span></span></div>';
+    hn.querySelectorAll('.hd').forEach((el) => {
+      el.addEventListener('pointerdown', onDown);
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointercancel', onUp);
+    });
+  }
+  function lvText(t, which, price) {
+    const setup = isSetup(t);
+    let units = t.units, risk = t.riskUsd;
+    if (setup && which === 'sl') { const sz = E.size(t.startBal, t.riskPct, t.entry, price); units = sz.units; risk = sz.riskUsd; }
+    const pnl = units * (price - t.entry) * t.dir, r = risk ? pnl / risk : 0;
+    if (which === 'sl') return 'SL ' + fmt(pnl) + (setup ? ' \u00b7 ' + units + ' oz' : '');
+    return 'TP +' + fmt(Math.abs(pnl)).replace('$', '$') + ' \u00b7 ' + Math.abs(r).toFixed(1) + 'R';
+  }
+  function track() {
+    trackId = 0;
+    const t = S && S.open, hn = $('#hnd'), ch = $('#chart');
+    if (!t || !series || !hn || !ch) return;
+    const h = ch.clientHeight;
+    hn.querySelectorAll('.hd').forEach((el) => {
+      const which = el.dataset.hd, price = drag && drag.which === which && drag.price != null ? drag.price : t[which];
+      if (price == null) { el.style.display = 'none'; return; }
+      const y = series.priceToCoordinate(price);
+      el.style.display = '';
+      const yy = y == null ? (price > E.close(S.cur) ? 18 : h - 18) : Math.max(18, Math.min(h - 18, y));
+      el.style.top = yy + 'px';
+      const txt = lvText(t, which, price);
+      if (el._t !== txt) { el._t = txt; el.firstChild.textContent = txt; }
+    });
+    trackId = requestAnimationFrame(track);
+  }
+  function onDown(e) {
+    const t = S && S.open; if (!t) return;
+    e.preventDefault(); e.stopPropagation();
+    pause();
+    drag = { which: e.currentTarget.dataset.hd, pid: e.pointerId, price: null };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {}
+    e.currentTarget.classList.add('drag');
+  }
+  function onMove(e) {
+    if (!drag || e.pointerId !== drag.pid || !S || !S.open || !series) return;
+    const rect = $('#chart').getBoundingClientRect();
+    let p = series.coordinateToPrice(e.clientY - rect.top);
+    if (p == null) return;
+    p = Math.round(p * 100) / 100;
+    const t = S.open, cur = E.close(S.cur), md = 0.5;
+    if (drag.which === 'sl') p = t.dir > 0 ? Math.min(p, cur - md) : Math.max(p, cur + md);
+    else p = t.dir > 0 ? Math.max(p, cur + md) : Math.min(p, cur - md);
+    drag.price = p;
+    if (lineObjs[drag.which]) lineObjs[drag.which].applyOptions({ price: p });
+  }
+  function onUp(e) {
+    if (!drag || e.pointerId !== drag.pid) return;
+    const d = drag; drag = null;
+    e.currentTarget.classList.remove('drag');
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (x) {}
+    const t = S && S.open;
+    if (t && d.price != null) { if (d.which === 'sl') setSL(t, d.price); else setTP(t, d.price); saveP(); }
+    drawLines(); updateOpenPanel();
+  }
+
+  // ---- level changes ----
+  function applyLive(t, sl, tp) {
+    const sz = E.size(t.startBal, t.riskPct, t.entry, sl);
+    if (!sz.units) return false;
+    t.units = sz.units; t.riskUsd = sz.riskUsd; t.capped = sz.capped; t.sl = sl; t.sl0 = sl; t.tp = tp;
+    t.rr0 = tp ? Math.abs(tp - t.entry) / Math.abs(t.entry - sl) : 0;
+    return true;
+  }
+  function setSL(t, p) { if (isSetup(t)) applyLive(t, p, t.tp); else E.setStop(t, p); }
+  function setTP(t, p) { if (isSetup(t)) applyLive(t, t.sl, p); else t.tp = p; }
+
   function drawTradebar() {
     const tb = $('#tradebar'); if (!tb) return;
     if (!S.open) {
       tb.innerHTML = '<div class="tbtns"><button class="sell" id="b_sell">SELL</button><button class="buy" id="b_buy">BUY</button></div>' +
         '<div class="muted sm center2">Today: ' + S.dayTrades + '/' + P.plan.risk.maxTrades + ' trades &middot; session ' + S.trades + ' trades</div>';
-      $('#b_sell').onclick = () => openTicket(-1); $('#b_buy').onclick = () => openTicket(1);
+      $('#b_sell').onclick = () => quickTrade(-1); $('#b_buy').onclick = () => quickTrade(1);
     } else {
-      tb.innerHTML = '<div class="open"><div><b id="o_dir"></b> <span id="o_info" class="muted sm"></span></div><div id="o_pnl" class="big"></div></div>' +
-        '<div class="tbtns"><button class="ghost2" id="b_edit">Edit SL / TP</button><button class="close" id="b_close">Close now</button></div>';
+      tb.innerHTML = '<div class="open"><div><b id="o_dir"></b> <span id="o_info" class="muted sm"></span></div><div id="o_pnl" class="big"></div></div><div id="o_hint" class="muted sm"></div>' +
+        '<div class="tbtns"><button class="ghost2" id="b_edit">Type SL / TP</button><button class="close" id="b_close">Close now</button></div>';
       $('#b_close').onclick = () => { pause(); finishTrade(E.close(S.cur), E.t(S.cur), 'MANUAL'); };
       $('#b_edit').onclick = editStops; updateOpenPanel();
     }
@@ -479,67 +569,66 @@
     $('#o_dir').textContent = (t.dir > 0 ? 'LONG ' : 'SHORT ') + t.units + ' oz';
     $('#o_info').textContent = '@ ' + t.entry.toFixed(2) + ' | risk ' + fmt(t.riskUsd);
     el.textContent = fmt(f) + '  (' + r.toFixed(2) + 'R)'; el.className = 'big ' + (f >= 0 ? 'up' : 'dn');
+    const hint = $('#o_hint'); if (hint) hint.textContent = isSetup(t) ? 'Drag the SL / TP pills on the chart. Size follows your SL until you advance.' : '';
   }
 
   function defaultDist() {
     const cs = E.candles(S.tf, S.cur, 20); let s = 0; cs.forEach((c) => (s += c.high - c.low));
     const avg = cs.length ? s / cs.length : 5; return Math.max(1, Math.round(avg * 1.5 * 10) / 10);
   }
-  function openTicket(dir) {
+  // BUY / SELL: market order at once, default SL and TP, you drag them where you want
+  function quickTrade(dir) {
     pause();
+    if (S.open || S.pending) return;
     const plan = P.plan, px = E.close(S.cur), dist = defaultDist();
-    const sl0 = +(px - dir * dist).toFixed(2), tp0 = +(px + dir * (E.SPREAD / 2 + (dist + E.SPREAD / 2) * Math.max(plan.risk.minRR, 1))).toFixed(2);
+    const sl = +(px - dir * dist).toFixed(2), tp = +(px + dir * (E.SPREAD / 2 + (dist + E.SPREAD / 2) * Math.max(plan.risk.minRR, 1))).toFixed(2);
     const over = S.dayTrades >= plan.risk.maxTrades, breach = (S.dayStartBal - S.balance) >= S.dayStartBal * plan.risk.dailyLoss / 100;
-    let h = '<h3>' + (dir > 0 ? 'BUY' : 'SELL') + ' gold <span class="muted sm">@ ' + px.toFixed(2) + '</span></h3>';
-    if (over) h += '<div class="warn">You already took ' + S.dayTrades + ' trades today. Your limit is ' + plan.risk.maxTrades + '.</div>';
-    if (breach) h += '<div class="warn">Daily loss limit reached. Your plan says stop for the day.</div>';
-    h += '<div class="grid2"><div><label>Stop loss</label><input id="t_sl" type="number" inputmode="decimal" step="0.1" value="' + sl0 + '"></div>' +
-      '<div><label>Take profit</label><input id="t_tp" type="number" inputmode="decimal" step="0.1" value="' + tp0 + '"></div>' +
-      '<div><label>Risk %</label><input id="t_risk" type="number" inputmode="decimal" step="0.25" value="' + plan.risk.pct + '"></div><div><label>&nbsp;</label><div id="t_size" class="sizebox"></div></div></div>';
-    h += '<div class="chk"><h4>Your steps</h4>' + plan.steps.map((s, i) => '<label class="inl"><input type="checkbox" data-cs="' + i + '"> ' + esc(s) + '</label>').join('') +
-      '<h4>Confluences</h4>' + plan.conf.map((c, i) => { const l = confLabel(c); return '<label class="inl"><input type="checkbox" data-cc="' + i + '"> <span><b>' + esc(l.name) + '</b>' + (c.required ? ' *' : '') + '<br><span class="muted sm">' + esc(l.v) + '</span></span></label>'; }).join('') +
-      (plan.avoid.length ? '<h4>Confirm none of these are true</h4>' + plan.avoid.map((s, i) => '<label class="inl"><input type="checkbox" data-ca="' + i + '"> ' + esc(s) + ' (not true)</label>').join('') : '') + '</div>';
-    h += '<label>Why this trade? (optional)</label><textarea id="t_note" rows="2"></textarea>' +
-      '<div class="tbtns"><button class="ghost2" id="t_cancel">Cancel</button><button class="' + (dir > 0 ? 'buy' : 'sell') + '" id="t_go">Place ' + (dir > 0 ? 'buy' : 'sell') + '</button></div>';
-    modal(h, 'tall');
-    const upd = () => {
-      const sl = +$('#t_sl').value, rp = +$('#t_risk').value;
-      const sz = E.size(S.balance, rp, px, sl);
-      $('#t_size').innerHTML = sz.units ? sz.units + ' oz<br><span class="muted sm">risk ' + fmt(sz.riskUsd) + (sz.capped ? ' (capped by 20x)' : '') + '</span>' : '<span class="dn">set a valid stop</span>';
-    };
-    ['t_sl', 't_tp', 't_risk'].forEach((id) => ($('#' + id).oninput = upd)); upd();
-    $('#t_cancel').onclick = closeModal;
-    $('#t_go').onclick = () => {
-      const sl = +$('#t_sl').value, tp = +$('#t_tp').value || null, rp = +$('#t_risk').value;
-      if (!(dir > 0 ? sl < px : sl > px)) { toast('Stop is on the wrong side'); return; }
-      if (tp && !(dir > 0 ? tp > px : tp < px)) { toast('Target is on the wrong side'); return; }
-      if (!(rp > 0 && rp <= 25)) { toast('Risk % looks wrong'); return; }
-      const chk = { steps: [...document.querySelectorAll('[data-cs]')].map((x) => x.checked), conf: [...document.querySelectorAll('[data-cc]')].map((x) => x.checked), avoid: [...document.querySelectorAll('[data-ca]')].map((x) => x.checked) };
-      const tr = E.openTrade({ dir, price: px, sl, tp, balance: S.balance, riskPct: rp, t: E.t(S.cur), check: chk, note: $('#t_note').value, ctx: { overTrades: over, dailyBreach: breach } });
-      if (!tr.units) { toast('Position size is zero'); return; }
-      tr.startBal = S.balance; S.open = tr; S.dayTrades++; S.trades++;
-      closeModal(); drawTradebar(); drawLines(); refreshHud(); saveP();
-    };
+    const tr = E.openTrade({ dir, price: px, sl, tp, balance: S.balance, riskPct: plan.risk.pct, t: E.t(S.cur), check: null, note: '', ctx: { overTrades: over, dailyBreach: breach } });
+    if (!tr.units) { toast('Position size is zero'); return; }
+    tr.startBal = S.balance; tr.i0 = S.cur;
+    S.open = tr; S.dayTrades++; S.trades++;
+    drawTradebar(); drawLines(); refreshHud(); saveP();
+    if (breach) toast('Daily loss limit reached. Your plan says stop for the day.');
+    else if (over) toast('Trade ' + S.dayTrades + ' today. Your limit is ' + plan.risk.maxTrades + '.');
   }
   function editStops() {
     pause(); const t = S.open;
-    modal('<h3>Edit stops</h3><div class="grid2"><div><label>Stop loss</label><input id="e_sl" type="number" inputmode="decimal" step="0.1" value="' + t.sl + '"></div><div><label>Take profit</label><input id="e_tp" type="number" inputmode="decimal" step="0.1" value="' + (t.tp || '') + '"></div></div>' +
-      '<p class="muted sm">Moving the stop closer is fine. Widening it is scored against you.</p><div class="tbtns"><button class="ghost2" id="e_c">Cancel</button><button class="buy" id="e_s">Save</button></div>');
+    modal('<h3>Type SL / TP</h3><div class="grid2"><div><label>Stop loss</label><input id="e_sl" type="number" inputmode="decimal" step="0.01" value="' + t.sl + '"></div><div><label>Take profit</label><input id="e_tp" type="number" inputmode="decimal" step="0.01" value="' + (t.tp || '') + '"></div></div>' +
+      '<p class="muted sm">Moving the stop closer is fine. Widening it after the first candle is scored against you.</p><div class="tbtns"><button class="ghost2" id="e_c">Cancel</button><button class="buy" id="e_s">Save</button></div>');
     $('#e_c').onclick = closeModal;
     $('#e_s').onclick = () => {
       const sl = +$('#e_sl').value, tp = +$('#e_tp').value || null, px = E.close(S.cur);
       if (!(t.dir > 0 ? sl < px : sl > px)) { toast('Stop would trigger immediately'); return; }
-      E.setStop(t, sl); t.tp = tp; closeModal(); drawLines(); saveP();
+      if (tp && !(t.dir > 0 ? tp > px : tp < px)) { toast('Target is on the wrong side'); return; }
+      if (sl !== t.sl) setSL(t, sl);
+      if (tp && tp !== t.tp) setTP(t, tp);
+      closeModal(); drawLines(); updateOpenPanel(); saveP();
     };
   }
 
-  // ---------- trade end + self review ----------
+  // ---------- trade end: checklist first, then result + self review ----------
   function finishTrade(price, tmin, reason) {
     pause();
     const t = S.open; E.closeTrade(t, price, tmin, reason);
-    S.balance += t.pnl; S.open = null; saveP();
+    S.balance += t.pnl; S.open = null; S.pending = t; saveP();
     drawTradebar(); drawLines(); refreshHud();
-    const rsn = { SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed by you' }[reason];
+    checklistStep(t);
+  }
+  function checklistStep(t) {
+    const plan = P.plan;
+    modal('<h3>Trade closed</h3><p class="muted sm">Tick what was true when you entered. The result comes next, so you cannot tune the answers to the outcome.</p>' +
+      '<div class="chk"><h4>Your steps</h4>' + plan.steps.map((s, i) => '<label class="inl"><input type="checkbox" data-cs="' + i + '"> ' + esc(s) + '</label>').join('') +
+      '<h4>Confluences</h4>' + plan.conf.map((c, i) => { const l = confLabel(c); return '<label class="inl"><input type="checkbox" data-cc="' + i + '"> <span><b>' + esc(l.name) + '</b>' + (c.required ? ' *' : '') + '<br><span class="muted sm">' + esc(l.v) + '</span></span></label>'; }).join('') +
+      (plan.avoid.length ? '<h4>Confirm none of these were true</h4>' + plan.avoid.map((s, i) => '<label class="inl"><input type="checkbox" data-ca="' + i + '"> ' + esc(s) + ' (not true)</label>').join('') : '') + '</div>' +
+      '<label>Why did you take it? (optional)</label><textarea id="t_note" rows="2"></textarea>' +
+      '<button class="btn big" id="ck_go">Reveal result</button>', 'tall nodismiss');
+    $('#ck_go').onclick = () => {
+      t.check = { steps: [...document.querySelectorAll('[data-cs]')].map((x) => x.checked), conf: [...document.querySelectorAll('[data-cc]')].map((x) => x.checked), avoid: [...document.querySelectorAll('[data-ca]')].map((x) => x.checked) };
+      t.note = $('#t_note').value.trim(); saveP(); refreshHud(); resultStep(t);
+    };
+  }
+  function resultStep(t) {
+    const rsn = { SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed by you' }[t.reason];
     modal('<h3>' + rsn + '</h3><div class="resbig ' + (t.pnl >= 0 ? 'up' : 'dn') + '">' + fmt(t.pnl) + ' <span class="muted">(' + t.r.toFixed(2) + 'R)</span></div>' +
       '<h4>Be honest. Did you follow your plan on this trade?</h4><div class="seg" id="rv_seg"><button data-f="yes">Yes, fully</button><button data-f="partly">Partly</button><button data-f="no">No</button></div>' +
       '<label>What did you do well? What would you change? (required)</label><textarea id="rv_note" rows="3" placeholder="Be specific. Was it the setup, the entry, the stop, your emotions?"></textarea>' +
@@ -551,6 +640,7 @@
     go.onclick = () => submitReview(t, said, $('#rv_note').value.trim());
   }
   function submitReview(t, said, note) {
+    S.pending = null;
     const sc = E.scoreTrade(t, P.plan, { followed: said });
     const lvBefore = E.levelFor(P.xp);
     const gain = Math.round(sc.total / 2) + (sc.adherence.level === 2 ? 10 : 0);

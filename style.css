@@ -47,7 +47,7 @@ textarea{resize:vertical}
 .hud{display:flex;justify-content:space-between;align-items:flex-end;padding:8px 12px 4px;gap:10px}
 .price{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
 .hr{text-align:right;font-variant-numeric:tabular-nums}
-#chart{flex:1;min-height:200px}
+
 .tfrow{display:flex;gap:4px;padding:6px 8px}
 .tf{flex:1;background:#141a23;border:1px solid #222a35;color:#8b95a5;border-radius:8px;padding:7px 0;font-size:13px}
 .tf.on{background:#e6c14b;color:#10141a;border-color:#e6c14b;font-weight:700}
@@ -86,3 +86,8 @@ select{width:100%;background:#0d1117;color:#e6edf3;border:1px solid #2b3544;bord
 .fxbar button.pl{flex:0 0 52px;background:#26a69a;font-size:16px}.fxbar button.pl.on{background:#ef5350}
 .indrow{display:flex;align-items:center;gap:8px}.indrow .inl{flex:1;margin:6px 0}.pin{width:70px!important;padding:8px!important}
 .verbig{font-size:30px;font-weight:800;color:#e6c14b;margin-top:4px}
+#chartwrap{flex:1;min-height:200px;position:relative}#chart{position:absolute;inset:0}
+#hnd{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.hd{position:absolute;left:6px;transform:translateY(-50%);pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none;padding:5px 10px;border-radius:14px;font-size:12px;font-weight:700;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5);z-index:5}
+.hd.sl{background:#ef5350}.hd.tp{background:#26a69a}.hd.drag{outline:2px solid #fff;font-size:13px}
+.hd span{pointer-events:none}
