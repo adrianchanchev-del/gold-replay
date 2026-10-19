@@ -17,6 +17,33 @@
 
   function loadP() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
   function saveP() { try { localStorage.setItem(KEY, JSON.stringify(P)); } catch (e) {} }
+  const IKEY = 'goldreplay.imgs';
+  function loadImgs() { try { return JSON.parse(localStorage.getItem(IKEY)) || []; } catch (e) { return []; } }
+  function saveImgs(a) { try { localStorage.setItem(IKEY, JSON.stringify(a)); return true; } catch (e) { toast('Storage full, remove a picture first'); return false; } }
+  function shrink(file) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onerror = rej;
+      fr.onload = () => {
+        const im = new Image(); im.onerror = rej;
+        im.onload = () => { const k = Math.min(1, 900 / Math.max(im.width, im.height)), c = document.createElement('canvas'); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); res(c.toDataURL('image/jpeg', 0.72)); };
+        im.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+  function backupJSON() { return JSON.stringify({ v: 1, profile: P, imgs: loadImgs() }); }
+  function doExport() {
+    const blob = new Blob([backupJSON()], { type: 'application/json' });
+    const f = new File([blob], 'gold-replay-backup.json', { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f], title: 'Gold Replay backup' }).catch(() => {}); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'gold-replay-backup.json'; a.click();
+  }
+  function doImport(file) {
+    const fr = new FileReader();
+    fr.onload = () => { try { const d = JSON.parse(fr.result); if (!d.profile || !d.profile.plan) throw new Error('not a backup'); P = d.profile; localStorage.setItem(KEY, JSON.stringify(P)); saveImgs(d.imgs || []); toast('Backup restored'); setTimeout(() => location.reload(), 600); } catch (e) { toast('That file is not a valid backup'); } };
+    fr.readAsText(file);
+  }
   function newProfile() { return { plan: null, xp: 0, streak: 0, bestStreak: 0, honest: 0, journal: [], session: null, sessionsDone: 0 }; }
   function defaultPlan() {
     return { name: '', market: 'XAUUSD (gold)', tfs: ['1D', '1m'], balance: 1000, steps: [''], conf: [], avoid: [''],
@@ -52,6 +79,7 @@
   // ---------- boot ----------
   async function boot() {
     P = loadP() || newProfile();
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     try { await loadData(); } catch (e) {
       $('#app').innerHTML = '<div class="center"><h2>Could not load data</h2><p class="muted">' + esc(e.message) + '</p><button class="btn" onclick="location.reload()">Retry</button></div>';
       return;
@@ -72,7 +100,7 @@
     const prog = '<div class="wprog">' + STEPS.map((s, i) => '<span class="' + (i === wStep ? 'on' : i < wStep ? 'done' : '') + '">' + (i + 1) + '</span>').join('') + '</div>';
     let body = '';
     if (wStep === 0) {
-      body = '<h2>What are you trading?</h2><p class="muted">Gold only for now, built from 1-minute data (Sep 2023 to now).</p>' +
+      body = (!W._editing && !P.plan ? '<div class="card"><b>Already set up before?</b><div class="muted sm">The Home Screen app does not share storage with Safari. Restore a backup file here.</div><button class="btn ghost" id="w_restore" style="margin-top:8px">Restore backup</button><input type="file" id="w_rfile" accept=".json,application/json" hidden></div>' : '') + '<h2>What are you trading?</h2><p class="muted">Gold only for now, built from 1-minute data (Sep 2023 to now).</p>' +
         '<label>Your name or trader tag</label><input id="w_name" value="' + esc(W.name) + '" placeholder="e.g. Andi">' +
         '<label>Market</label><input value="XAUUSD (gold)" disabled>' +
         '<label>Timeframes you use (tap to toggle)</label><div class="chips">' +
@@ -152,6 +180,7 @@
     q('[data-ctext]').forEach((el) => el.oninput = () => { W.conf[+el.dataset.ctext].text = el.value; });
     q('[data-cwhy]').forEach((el) => el.oninput = () => { W.conf[+el.dataset.cwhy].why = el.value; });
     q('[data-creq]').forEach((el) => el.onchange = () => { W.conf[+el.dataset.creq].required = el.checked; });
+    const rs = $('#w_restore'); if (rs) { rs.onclick = () => $('#w_rfile').click(); $('#w_rfile').onchange = (e) => e.target.files[0] && doImport(e.target.files[0]); }
     const bk = $('#wBack'); if (bk) bk.onclick = () => { collect(); wStep--; renderWizard(); };
     const cn = $('#wCancel'); if (cn) cn.onclick = () => { W = null; showTab('plan'); };
     $('#wNext').onclick = () => {
@@ -214,7 +243,7 @@
     const first = E.t(0), last = E.t(E.n() - 1);
     $('#view').innerHTML = '<div class="page"><h2>New session</h2><p class="muted">You get real gold history up to a start point. The future is hidden. Everything after is revealed one candle at a time.</p>' +
       '<div class="card"><label>Starting balance</label><input id="s_bal" type="number" inputmode="decimal" value="' + P.plan.balance + '">' +
-      '<label>Start date (optional, UTC, leave blank for a random weekday)</label><input id="s_date" type="date" min="' + new Date((first + 43200) * 60000).toISOString().slice(0, 10) + '" max="' + new Date((last - 20160) * 60000).toISOString().slice(0, 10) + '">' +
+      '<label>Start date (optional, UTC). Blank = random weekday since Apr 2025. Before 2025 the gold data is thin: many 1m candles are flat</label><input id="s_date" type="date" min="' + new Date((first + 43200) * 60000).toISOString().slice(0, 10) + '" max="' + new Date((last - 20160) * 60000).toISOString().slice(0, 10) + '">' +
       '<button class="btn big" id="s_go">Begin</button></div>' +
       '<div class="card"><b>Reminder: your risk rules</b><div class="muted">' + P.plan.risk.pct + '% per trade &middot; min RR ' + P.plan.risk.minRR + ' &middot; ' + P.plan.risk.maxTrades + ' trades/day &middot; ' + P.plan.risk.dailyLoss + '% daily loss limit</div></div></div>';
     $('#s_go').onclick = () => {
@@ -225,7 +254,7 @@
         if (idx < 0 || tm - E.t(idx) > 2880) { toast('No data near that date'); return; }
       } else {
         for (let k = 0; k < 60 && idx < 0; k++) {
-          const lo = first + 43200, hi = last - 20160;
+          const lo = Math.max(first + 43200, Date.UTC(2025, 3, 1) / 60000), hi = last - 20160;
           const day = Math.floor((lo + Math.random() * (hi - lo)) / 1440);
           const wd = new Date(day * 86400000).getUTCDay();
           if (wd === 0 || wd === 6) continue;
@@ -265,7 +294,7 @@
     chart = LW.createChart($('#chart'), {
       autoSize: true, layout: { background: { color: '#0d1117' }, textColor: '#8b95a5', fontSize: 11 },
       grid: { vertLines: { color: '#151b24' }, horzLines: { color: '#151b24' } },
-      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 8, borderColor: '#222a35' },
+      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: '#222a35', barSpacing: 9, minBarSpacing: 3, fixLeftEdge: false },
       rightPriceScale: { borderColor: '#222a35' }, crosshair: { mode: 0 },
     });
     series = chart.addSeries(LW.CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineVisible: true });
@@ -273,7 +302,7 @@
   function loadTF() {
     const data = E.candles(S.tf, S.cur, 400);
     series.setData(data); S.run = data[data.length - 1] ? Object.assign({}, data[data.length - 1]) : null;
-    chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 110), to: data.length + 8 });
+    chart.timeScale().applyOptions({ barSpacing: 9 }); chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, data.length - 55), to: data.length + 6 });
   }
   function dayRoll() {
     const dk = Math.floor(E.t(S.cur) / 1440);
@@ -466,10 +495,35 @@
 
   // ---------- plan ----------
   function renderPlan() {
+    const imgs = loadImgs();
     $('#view').innerHTML = '<div class="page"><h2>Your plan</h2><div class="card">' + planSummary(P.plan) + '</div>' +
-      '<button class="btn" id="p_edit">Edit plan</button> <button class="btn ghost" id="p_reset">Reset everything</button><p class="muted sm">Data: PAXG/USDT 1-minute bars (gold-backed token, tracks spot gold closely but is not identical to broker XAUUSD). Times in UTC.</p></div>';
+      '<button class="btn" id="p_edit">Edit plan</button>' +
+      '<h3 style="margin-top:22px">Plan pictures</h3><p class="muted sm">Upload screenshots or photos of your written plan or setups. They stay on this device and open from the trade ticket.</p>' +
+      '<div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
+      '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden>' +
+      '<h3 style="margin-top:22px">Backup</h3><p class="muted sm">Your plan, XP and journal live on this device. Save a backup file so updates, a phone change or clearing Safari data cannot wipe them.</p>' +
+      '<button class="btn" id="p_export">Save backup</button> <button class="btn ghost" id="p_import">Restore backup</button><input type="file" id="p_ifile" accept=".json,application/json" hidden>' +
+      '<p style="margin-top:22px"><button class="btn ghost" id="p_reset">Reset everything</button></p>' +
+      '<p class="muted sm">Data: PAXG/USDT 1-minute bars (gold-backed token, close to spot gold but not identical to broker XAUUSD). Times in UTC. Updates to the app never touch your saved data.</p></div>';
     $('#p_edit').onclick = () => startWizard(true);
-    $('#p_reset').onclick = () => { modal('<h3>Reset everything?</h3><p>Deletes your plan, XP and journal on this device.</p><div class="tbtns"><button class="ghost2" id="rs_n">Cancel</button><button class="sell" id="rs_y">Delete</button></div>'); $('#rs_n').onclick = closeModal; $('#rs_y').onclick = () => { localStorage.removeItem(KEY); location.reload(); }; };
+    $('#p_addimg').onclick = () => $('#p_imgfile').click();
+    $('#p_imgfile').onchange = async (e) => {
+      const a = loadImgs();
+      for (const f of [...e.target.files].slice(0, 8)) { try { a.push(await shrink(f)); } catch (x) {} }
+      if (a.length > 12) a.splice(0, a.length - 12);
+      if (saveImgs(a)) renderPlan();
+    };
+    document.querySelectorAll('[data-rmimg]').forEach((b) => (b.onclick = () => { const a = loadImgs(); a.splice(+b.dataset.rmimg, 1); saveImgs(a); renderPlan(); }));
+    document.querySelectorAll('[data-view]').forEach((im) => (im.onclick = () => showImg(+im.dataset.view)));
+    $('#p_export').onclick = doExport;
+    $('#p_import').onclick = () => $('#p_ifile').click();
+    $('#p_ifile').onchange = (e) => e.target.files[0] && doImport(e.target.files[0]);
+    $('#p_reset').onclick = () => { modal('<h3>Reset everything?</h3><p>Deletes your plan, XP and journal on this device. Save a backup first if unsure.</p><div class="tbtns"><button class="ghost2" id="rs_n">Cancel</button><button class="sell" id="rs_y">Delete</button></div>'); $('#rs_n').onclick = closeModal; $('#rs_y').onclick = () => { localStorage.removeItem(KEY); localStorage.removeItem(IKEY); location.reload(); }; };
+  }
+  function showImg(i) {
+    const a = loadImgs(); if (!a[i]) return;
+    const m = $('#modal'); m.innerHTML = '<div class="sheet tall"><img class="bigimg" src="' + a[i] + '"><div class="tbtns"><button class="ghost2" id="im_c">Close</button></div></div>'; m.classList.add('on');
+    $('#im_c').onclick = closeModal;
   }
 
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });

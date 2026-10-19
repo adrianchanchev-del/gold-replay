@@ -77,3 +77,4 @@ textarea{resize:vertical}
 .jr .jt{display:flex;gap:8px;align-items:center}.jr .sc{margin-left:auto;background:#1c2430;border-radius:6px;padding:2px 8px;font-weight:700}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#e6edf3;color:#10141a;padding:10px 16px;border-radius:20px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .2s;z-index:20;max-width:90%;text-align:center}
 #toast.on{opacity:1}
+.thumbs{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.th{position:relative;width:30%}.th img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:1px solid #222a35}.th .x{position:absolute;top:0;right:0;background:rgba(0,0,0,.6);border-radius:50%;width:26px;height:26px;padding:0;color:#fff;font-size:18px}.bigimg{width:100%;border-radius:8px}
