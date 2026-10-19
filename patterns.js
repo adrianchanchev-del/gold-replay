@@ -54,21 +54,41 @@
     },
   ];
 
+  function rng(seed) { let x = 0; for (const ch of seed) x = (x * 31 + ch.charCodeAt(0)) >>> 0; return () => { x = (x * 1664525 + 1013904223) >>> 0; return x / 4294967296; }; }
+  // lead-in candles so the pattern sits inside a believable chart, not on its own
+  function lead(v, n) {
+    const r = rng(v.id + v.label), out = [];
+    let px = v.candles[0][0];
+    const dirn = v.candles[0][3] >= v.candles[0][0] ? -1 : 1;
+    for (let i = 0; i < n; i++) {
+      const move = (r() - 0.5 + dirn * 0.06) * 7, c = px, o = px - move;
+      const hi = Math.max(o, c) + r() * 3, lo = Math.min(o, c) - r() * 3;
+      out.unshift([o, hi, lo, c]); px = o;
+    }
+    return out;
+  }
   function svg(v, w, h) {
-    w = w || 132; h = h || 88;
-    const n = v.candles.length, pad = 8, sx = (w - pad * 2) / n, bw = Math.min(14, sx * 0.55);
-    const y = (p) => h - 6 - (p / 100) * (h - 12);
-    let s = `<svg viewBox="0 0 ${w} ${h}" width="100%" xmlns="http://www.w3.org/2000/svg">`;
+    w = w || 200; h = h || 130;
+    const all = lead(v, 10).concat(v.candles), n = all.length, pad = 6;
+    let mn = 1e9, mx = -1e9;
+    all.forEach((c) => { mn = Math.min(mn, c[2]); mx = Math.max(mx, c[1]); });
+    if (v.zone) { mn = Math.min(mn, v.zone[0]); mx = Math.max(mx, v.zone[1]); }
+    if (v.line != null) { mn = Math.min(mn, v.line); mx = Math.max(mx, v.line); }
+    const y = (p) => pad + (1 - (p - mn) / (mx - mn)) * (h - pad * 2);
+    const sx = (w - pad * 2) / (n + 1), bw = Math.max(3, sx * 0.55);
+    const x0 = pad + sx * (all.length - v.candles.length);
+    let s = `<svg viewBox="0 0 ${w} ${h}" width="100%" xmlns="http://www.w3.org/2000/svg"><rect width="${w}" height="${h}" fill="#0d1117"/>`;
+    for (let g = 1; g < 4; g++) s += `<line x1="0" x2="${w}" y1="${g * h / 4}" y2="${g * h / 4}" stroke="#151b24" stroke-width="1"/>`;
     if (v.zone) {
       const y1 = y(v.zone[1]), y2 = y(v.zone[0]);
-      s += `<rect x="2" y="${y1}" width="${w - 4}" height="${y2 - y1}" fill="#4f8cff" opacity="0.22"/>`;
+      s += `<rect x="${x0 - sx / 2}" y="${y1}" width="${w - x0 + sx / 2}" height="${Math.max(2, y2 - y1)}" fill="#4f8cff" opacity="0.22"/>`;
     }
-    if (v.line != null) s += `<line x1="2" x2="${w - 2}" y1="${y(v.line)}" y2="${y(v.line)}" stroke="#e6c14b" stroke-width="1.2" stroke-dasharray="4 3"/>`;
-    v.candles.forEach((c, i) => {
-      const x = pad + sx * i + sx / 2, up = c[3] >= c[0], col = up ? '#26a69a' : '#ef5350';
+    if (v.line != null) s += `<line x1="${x0 - sx * 3}" x2="${w - 2}" y1="${y(v.line)}" y2="${y(v.line)}" stroke="#e6c14b" stroke-width="1" stroke-dasharray="4 3"/>`;
+    all.forEach((c, i) => {
+      const x = pad + sx * (i + 1), up = c[3] >= c[0], col = up ? '#26a69a' : '#ef5350';
       const top = y(Math.max(c[0], c[3])), bot = y(Math.min(c[0], c[3]));
-      s += `<line x1="${x}" x2="${x}" y1="${y(c[1])}" y2="${y(c[2])}" stroke="${col}" stroke-width="1.5"/>`;
-      s += `<rect x="${x - bw / 2}" y="${top}" width="${bw}" height="${Math.max(1.5, bot - top)}" fill="${col}"/>`;
+      s += `<line x1="${x}" x2="${x}" y1="${y(c[1])}" y2="${y(c[2])}" stroke="${col}" stroke-width="1"/>`;
+      s += `<rect x="${x - bw / 2}" y="${top}" width="${bw}" height="${Math.max(1, bot - top)}" fill="${col}"/>`;
     });
     return s + '</svg>';
   }
