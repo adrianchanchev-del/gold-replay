@@ -4,6 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const APP_VERSION = '0.7.0', BUILD = 'gr-v7';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [5, '5m'], [15, '15m'], [60, '1h'], [240, '4h'], [1440, '1D']];
   const SPEEDS = [1, 2, 5, 15, 60];
@@ -65,7 +66,7 @@
   // ---------- data ----------
   async function loadData() {
     const box = $('#app');
-    box.innerHTML = '<div class="center"><div class="logo">&#9672;</div><h2>Gold Replay</h2><div id="prog" class="muted">Loading gold data&hellip;</div><div class="bar"><i id="pbar"></i></div></div>';
+    box.innerHTML = '<div class="center"><div class="logo">&#9672;</div><h2>Gold Replay</h2><div class="muted sm">v'+APP_VERSION+'</div><div id="prog" class="muted">Loading gold data&hellip;</div><div class="bar"><i id="pbar"></i></div></div>';
     const idx = await (await fetch('data-index.json')).json();
     let done = 0;
     const bufs = await Promise.all(idx.chunks.map(async (c) => {
@@ -79,6 +80,8 @@
   // ---------- boot ----------
   async function boot() {
     P = loadP() || newProfile();
+    if (!P.set) P.set = { tf: 15, speed: 0 };
+    speedI = Math.min(SPEEDS.length - 1, P.set.speed || 0);
     if (!P.ind) P.ind = [{ type: 'ema', p: 20, on: true, color: PALETTE[0] }, { type: 'vol', p: 0, on: true, color: IND.vol[2] }];
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     try { await loadData(); } catch (e) {
@@ -233,10 +236,11 @@
     tab = t; pause();
     if (t !== 'replay') destroyChart();
     $('#app').innerHTML = '<div id="view"></div><nav class="nav">' +
-      [['replay', 'Replay'], ['stats', 'Stats'], ['plan', 'Plan']].map((x) => '<button data-tab="' + x[0] + '" class="' + (t === x[0] ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</nav>';
+      [['replay', 'Replay'], ['stats', 'Stats'], ['plan', 'Plan'], ['settings', 'Settings']].map((x) => '<button data-tab="' + x[0] + '" class="' + (t === x[0] ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</nav>';
     document.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { if (b.dataset.tab !== tab) showTab(b.dataset.tab); });
     if (t === 'replay') (S ? renderReplay() : renderStart());
     else if (t === 'stats') renderStats();
+    else if (t === 'settings') renderSettings();
     else renderPlan();
   }
 
@@ -287,7 +291,7 @@
       const bal = Math.max(100, +$('#s_bal').value || 1000), idx = startIdx(selDay, SESSIONS[selSess][1]);
       if (idx < 0) { toast('No data for that session'); return; }
       const t = E.t(idx);
-      S = P.session = { dv: DV, cur: idx, tf: 15, startBal: bal, balance: bal, trades: 0, open: null, dayKey: Math.floor(t / 1440), dayStartBal: bal, dayTrades: 0, startT: t };
+      S = P.session = { dv: DV, cur: idx, tf: (P.set && P.set.tf) || 15, startBal: bal, balance: bal, trades: 0, open: null, dayKey: Math.floor(t / 1440), dayStartBal: bal, dayTrades: 0, startT: t };
       saveP(); showTab('replay');
     }
   }
@@ -591,25 +595,46 @@
 
   // ---------- plan ----------
   function renderPlan() {
-    const imgs = loadImgs();
-    $('#view').innerHTML = '<div class="page"><h2>Your plan</h2><div class="card">' + planSummary(P.plan) + '</div>' +
-      '<button class="btn" id="p_edit">Edit plan</button>' +
-      '<h3 style="margin-top:22px">Plan pictures</h3><p class="muted sm">Upload screenshots or photos of your written plan or setups. They stay on this device and open from the trade ticket.</p>' +
-      '<div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
-      '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden>' +
-      '<h3 style="margin-top:22px">Backup</h3><p class="muted sm">Your plan, XP and journal live on this device. Save a backup file so updates, a phone change or clearing Safari data cannot wipe them.</p>' +
-      '<button class="btn" id="p_export">Save backup</button> <button class="btn ghost" id="p_import">Restore backup</button><input type="file" id="p_ifile" accept=".json,application/json" hidden>' +
-      '<p style="margin-top:22px"><button class="btn ghost" id="p_reset">Reset everything</button></p>' +
-      '<p class="muted sm">Data: PAXG/USDT 1-minute bars (gold-backed token, close to spot gold but not identical to broker XAUUSD). Times in UTC. Updates to the app never touch your saved data.</p></div>';
+    $('#view').innerHTML = '<div class="page"><h2>Your plan</h2><div class="card">' + planSummary(P.plan) + '</div><button class="btn" id="p_edit">Edit plan</button></div>';
     $('#p_edit').onclick = () => startWizard(true);
+  }
+  async function latestBuild() {
+    try { const t = await (await fetch('sw.js?x=' + Date.now(), { cache: 'no-store' })).text(); const m = t.match(/const V='([^']+)'/); return m ? m[1] : null; } catch (e) { return null; }
+  }
+  async function forceRefresh() {
+    try { const rs = await navigator.serviceWorker.getRegistrations(); for (const r of rs) await r.unregister(); } catch (e) {}
+    try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
+    location.href = location.pathname + '?r=' + Date.now();
+  }
+  function renderSettings() {
+    const imgs = loadImgs(), ft = E.t(0), lt = E.t(E.n() - 1), nd = dayList().length;
+    const tfOpts = TFS.map((t) => '<option value="' + t[0] + '"' + ((P.set.tf || 15) === t[0] ? ' selected' : '') + '>' + t[1] + '</option>').join('');
+    const spOpts = SPEEDS.map((v, i) => '<option value="' + i + '"' + (P.set.speed === i ? ' selected' : '') + '>' + v + 'x</option>').join('');
+    $('#view').innerHTML = '<div class="page"><h2>Settings</h2>' +
+      '<div class="card"><b>App version</b><div class="verbig">v' + APP_VERSION + '</div><div class="muted sm">Build ' + BUILD + '</div><div id="v_latest" class="muted sm" style="margin-top:6px">Latest on server: checking&hellip;</div>' +
+      '<div class="tbtns"><button class="ghost2" id="v_check">Check for update</button><button class="close" id="v_force">Force refresh</button></div></div>' +
+      '<div class="card"><b>Data</b><div class="muted sm" style="margin-top:4px">Spot gold XAUUSD (Dukascopy bid), 1-minute, prices to 2 decimals, UTC.<br>' + fdate(ft) + ' to ' + fdate(lt) + '<br>' + nd + ' trading days. More days are added automatically.</div></div>' +
+      '<div class="card"><b>Replay defaults</b><label>Starting chart timeframe</label><select id="st_tf">' + tfOpts + '</select><label>Starting playback speed</label><select id="st_sp">' + spOpts + '</select>' +
+      '<button class="btn ghost" id="st_ind" style="margin-top:12px">Indicators&hellip;</button></div>' +
+      '<div class="card"><b>Plan pictures</b><p class="muted sm">Screenshots or photos of your written plan or setups. Kept on this device.</p><div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
+      '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
+      '<div class="card"><b>Backup</b><p class="muted sm">Plan, XP, journal and pictures live on this device. Save a file so a phone change or cleared Safari data cannot wipe them. Updating the app never touches them.</p>' +
+      '<button class="btn" id="p_export">Save backup</button> <button class="btn ghost" id="p_import">Restore backup</button><input type="file" id="p_ifile" accept=".json,application/json" hidden></div>' +
+      '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
+    latestBuild().then((lb) => { const el = $('#v_latest'); if (!el) return; el.innerHTML = !lb ? 'Latest on server: could not check (offline?)' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; });
+    $('#v_check').onclick = () => { $('#v_latest').textContent = 'Latest on server: checking\u2026'; latestBuild().then((lb) => { $('#v_latest').innerHTML = !lb ? 'Could not check' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; }); };
+    $('#v_force').onclick = forceRefresh;
+    $('#st_tf').onchange = () => { P.set.tf = +$('#st_tf').value; saveP(); toast('Saved'); };
+    $('#st_sp').onchange = () => { P.set.speed = +$('#st_sp').value; speedI = P.set.speed; saveP(); toast('Saved'); };
+    $('#st_ind').onclick = openInd;
     $('#p_addimg').onclick = () => $('#p_imgfile').click();
     $('#p_imgfile').onchange = async (e) => {
       const a = loadImgs();
       for (const f of [...e.target.files].slice(0, 8)) { try { a.push(await shrink(f)); } catch (x) {} }
       if (a.length > 12) a.splice(0, a.length - 12);
-      if (saveImgs(a)) renderPlan();
+      if (saveImgs(a)) renderSettings();
     };
-    document.querySelectorAll('[data-rmimg]').forEach((b) => (b.onclick = () => { const a = loadImgs(); a.splice(+b.dataset.rmimg, 1); saveImgs(a); renderPlan(); }));
+    document.querySelectorAll('[data-rmimg]').forEach((b) => (b.onclick = () => { const a = loadImgs(); a.splice(+b.dataset.rmimg, 1); saveImgs(a); renderSettings(); }));
     document.querySelectorAll('[data-view]').forEach((im) => (im.onclick = () => showImg(+im.dataset.view)));
     $('#p_export').onclick = doExport;
     $('#p_import').onclick = () => $('#p_ifile').click();

@@ -85,3 +85,4 @@ select{width:100%;background:#0d1117;color:#e6edf3;border:1px solid #2b3544;bord
 .fxbar button{flex:1;background:#262c3d;border:0;color:#e6edf3;border-radius:9px;padding:10px 2px;font-size:12px;font-weight:600}
 .fxbar button.pl{flex:0 0 52px;background:#26a69a;font-size:16px}.fxbar button.pl.on{background:#ef5350}
 .indrow{display:flex;align-items:center;gap:8px}.indrow .inl{flex:1;margin:6px 0}.pin{width:70px!important;padding:8px!important}
+.verbig{font-size:30px;font-weight:800;color:#e6c14b;margin-top:4px}
