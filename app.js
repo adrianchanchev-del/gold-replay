@@ -4,14 +4,14 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.9.0', BUILD = 'gr-v9';
+  const APP_VERSION = '0.10.1', BUILD = 'gr-v10b';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [5, '5m'], [15, '15m'], [60, '1h'], [240, '4h'], [1440, '1D']];
   const ICON = {
     replay: '<svg viewBox="0 0 24 24"><path d="M7 3v3M7 14v4M7 6h0M5 6h4v8H5zM17 6v3M17 17v3M15 9h4v8h-4z"/></svg>',
     stats: '<svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
     plan: '<svg viewBox="0 0 24 24"><path d="M9 4h6v3H9zM7 5H5v16h14V5h-2M9 12h6M9 16h4"/></svg>',
-    settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>',
+    settings: '<svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   };
   const SPEEDS = [1, 2, 5, 15, 60];
   const fmt = (n, d = 2) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -241,8 +241,8 @@
   function showTab(t) {
     tab = t; pause();
     if (t !== 'replay') destroyChart();
-    $('#app').innerHTML = '<div id="view"></div><nav class="nav">' +
-      [['replay', 'Replay'], ['stats', 'Stats'], ['plan', 'Plan'], ['settings', 'Settings']].map((x) => '<button data-tab="' + x[0] + '" class="' + (t === x[0] ? 'on' : '') + '">' + ICON[x[0]] + '<span>' + x[1] + '</span></button>').join('') + '</nav>';
+    $('#app').innerHTML = '<div id="view"></div><div class="dock">' + (t === 'replay' && S ? '<div id="tradebar"></div>' : '') + '<nav class="nav">' +
+      [['replay', 'Replay'], ['stats', 'Stats'], ['plan', 'Plan'], ['settings', 'Settings']].map((x) => '<button data-tab="' + x[0] + '" class="' + (t === x[0] ? 'on' : '') + '">' + ICON[x[0]] + '<span>' + x[1] + '</span></button>').join('') + '</nav></div>';
     document.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { if (b.dataset.tab !== tab) showTab(b.dataset.tab); });
     if (t === 'replay') (S ? renderReplay() : renderStart());
     else if (t === 'stats') renderStats();
@@ -311,11 +311,10 @@
   function renderReplay() {
     const tfBtns = TFS.map((t) => '<button class="tf ' + (S.tf === t[0] ? 'on' : '') + '" data-tfs="' + t[0] + '">' + t[1] + '</button>').join('');
     $('#view').innerHTML = '<div class="rp">' +
-      '<div class="top"><div class="tfrow">' + tfBtns + '<button class="tf ind" id="c_ind">&fnof;x</button></div>' +
-      '<div class="info"><span id="h_time"></span><span id="h_sess" class="stag"></span><span class="sp"></span><span id="h_cnt" class="muted"></span><span class="muted">Bal</span> <b id="h_bal"></b> <span class="muted">Eq</span> <b id="h_eq"></b></div></div>' +
-      '<div id="chartwrap"><div id="chart"></div><div id="hnd"></div><div id="px"></div>' +
-      '<div class="island"><div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next" title="Next candle">Next<br>candle</button><button id="c_step">+1m</button><button id="c_sess" title="Next session">Next<br>session</button><button id="c_speed">1x</button><button id="c_end" class="endb">End</button></div>' +
-      '<div id="tradebar"></div></div></div></div>';
+      '<div class="top"><div class="tfrow">' + tfBtns + '<button class="tf ind" id="c_ind">fx</button></div>' +
+      '<div class="info"><div class="il"><span id="h_sess" class="stag"></span><span id="h_time"></span></div><div class="ir"><span id="h_cnt"></span><span class="kv"><i>Bal</i><b id="h_bal"></b></span><span class="kv"><i>Eq</i><b id="h_eq"></b></span></div></div></div>' +
+      '<div id="chartwrap"><div id="chart"></div><div id="hnd"></div>' +
+      '<div class="island"><div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next">Next candle</button><button id="c_step">+1m</button><button id="c_sess">Next session</button><button id="c_speed">1x</button><button id="c_end" class="endb">End</button></div></div></div></div>';
     mountChart(); loadTF();
     document.querySelectorAll('[data-tfs]').forEach((b) => (b.onclick = () => { S.tf = +b.dataset.tfs; document.querySelectorAll('.tf[data-tfs]').forEach((x) => x.classList.toggle('on', x === b)); loadTF(); saveP(); }));
     $('#c_step').onclick = () => { pause(); advance(1); };
@@ -337,7 +336,7 @@
       grid: { vertLines: { color: '#1b2030' }, horzLines: { color: '#1b2030' } },
       localization: { priceFormatter: (p) => p.toFixed(2) },
       timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: '#2a2e39', barSpacing: 9, minBarSpacing: 3 },
-      rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.06, bottom: 0.24 } }, crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.14 } }, crosshair: { mode: 0 },
     });
     series = chart.addSeries(LW.CandlestickSeries, { upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineVisible: true, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } });
   }
@@ -453,9 +452,8 @@
   function equity() { return S.balance + (S.open ? E.floating(S.open, E.close(S.cur)) : 0); }
   function refreshHud() {
     if (!$('#h_time')) return;
-    $('#h_time').textContent = fdate(E.t(S.cur)); $('#h_sess').textContent = sessName(E.t(S.cur));
-    const px = $('#px'); if (px) px.textContent = E.close(S.cur).toFixed(2);
-    const cn = $('#h_cnt'); if (cn) cn.textContent = S.dayTrades + '/' + P.plan.risk.maxTrades + ' trades \u00b7 ';
+    $('#h_time').textContent = fdate(E.t(S.cur)).slice(5).replace(' UTC', ''); $('#h_sess').textContent = sessName(E.t(S.cur));
+    const cn = $('#h_cnt'); if (cn) cn.textContent = S.dayTrades + '/' + P.plan.risk.maxTrades;
     const masked = S.pending && !S.pending.check;
     $('#h_bal').textContent = masked ? '\u2022\u2022\u2022\u2022' : fmt(S.balance);
     const eq = equity(); const el = $('#h_eq'); el.textContent = masked ? '\u2022\u2022\u2022\u2022' : fmt(eq); el.className = masked ? '' : (eq >= S.balance ? 'up' : 'dn');
@@ -561,12 +559,10 @@
   function drawTradebar() {
     const tb = $('#tradebar'); if (!tb) return;
     if (!S.open) {
-      tb.innerHTML = '<div class="tbtns"><button class="sell" id="b_sell">SELL</button><button class="buy" id="b_buy">BUY</button></div>' +
-        '';
+      tb.innerHTML = '<div class="dk"><button class="sell" id="b_sell">SELL</button><button class="buy" id="b_buy">BUY</button></div>';
       $('#b_sell').onclick = () => quickTrade(-1); $('#b_buy').onclick = () => quickTrade(1);
     } else {
-      tb.innerHTML = '<div class="open"><div><b id="o_dir"></b> <span id="o_info" class="muted sm"></span></div><div id="o_pnl" class="big"></div></div>' +
-        '<div class="tbtns"><button class="ghost2" id="b_edit">Type SL / TP</button><button class="close" id="b_close">Close now</button></div>';
+      tb.innerHTML = '<div class="dk open"><div class="oi"><div id="o_dir"></div><div id="o_info" class="muted"></div></div><div id="o_pnl" class="big"></div><button class="ghost2" id="b_edit">SL/TP</button><button class="close" id="b_close">Close</button></div>';
       $('#b_close').onclick = () => { pause(); finishTrade(E.close(S.cur), E.t(S.cur), 'MANUAL'); };
       $('#b_edit').onclick = editStops; updateOpenPanel();
     }
@@ -575,7 +571,7 @@
     const t = S.open, el = $('#o_pnl'); if (!t || !el) return;
     const f = E.floating(t, E.close(S.cur)), r = t.riskUsd ? f / t.riskUsd : 0;
     $('#o_dir').textContent = (t.dir > 0 ? 'LONG ' : 'SHORT ') + t.units + ' oz';
-    $('#o_info').textContent = '@ ' + t.entry.toFixed(2) + ' | risk ' + fmt(t.riskUsd);
+    $('#o_info').textContent = '@ ' + t.entry.toFixed(2);
     el.textContent = fmt(f) + '  (' + r.toFixed(2) + 'R)'; el.className = 'big ' + (f >= 0 ? 'up' : 'dn');
   }
 
@@ -745,8 +741,6 @@
   }
 
   ['gesturestart', 'gesturechange', 'gestureend'].forEach((n) => document.addEventListener(n, (e) => e.preventDefault()));
-  let lastTouch = 0;
-  document.addEventListener('touchend', (e) => { const n = Date.now(); if (n - lastTouch < 350 && !/INPUT|TEXTAREA|SELECT/.test((e.target.tagName || ''))) e.preventDefault(); lastTouch = n; }, { passive: false });
   document.addEventListener('focusout', () => setTimeout(() => window.scrollTo(0, 0), 60));
   window.addEventListener('scroll', () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });

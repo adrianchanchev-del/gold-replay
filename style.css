@@ -116,3 +116,33 @@ input,textarea,select{-webkit-user-select:text;user-select:text}
 
 .island .open{margin-top:5px;font-size:12px}.island .open #o_pnl{font-size:15px}
 .island .tbtns button{padding:10px 0}
+
+/* ---- v0.10 layout ---- */
+.top{padding:calc(6px + env(safe-area-inset-top)*0) 10px 0;background:#0d1117;border-bottom:1px solid #1b2030}
+.tfrow{display:flex;gap:6px;padding:4px 0 8px}
+.tf{flex:1;height:32px;padding:0;border-radius:16px;background:transparent;border:1px solid #232b39;color:#8b95a5;font-size:13px;font-weight:600}
+.tf.on{background:#e6c14b;border-color:#e6c14b;color:#10141a}
+.tf.ind{flex:0 0 38px;font-style:normal;font-weight:700;color:#e6c14b}
+.info{display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;font-size:12px;color:#aab3c0;font-variant-numeric:tabular-nums;gap:8px}
+.info .il,.info .ir{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.info .kv{display:inline-flex;gap:4px;align-items:baseline}.info .kv i{font-style:normal;color:#6b7686;font-size:11px}.info .kv b{color:#e6edf3;font-weight:600}
+#h_cnt{color:#6b7686;border:1px solid #232b39;border-radius:8px;padding:0 6px;font-size:11px}
+.stag{margin:0}
+#px{display:none}
+.island{left:50%;right:auto;transform:translateX(-50%);bottom:10px;width:calc(100% - 24px);max-width:420px;padding:5px;border-radius:18px}
+.island .fxbar{display:flex;gap:4px}
+.island .fxbar button{height:34px;padding:0 4px;font-size:11px;font-weight:600;white-space:nowrap;border-radius:12px;background:#262c3d}
+.island .fxbar button.pl{flex:0 0 42px;font-size:14px}
+.island .fxbar .endb{flex:0 0 42px}
+.dock{flex:none;background:#0d1117;border-top:1px solid #1b2030;padding-bottom:max(env(safe-area-inset-bottom),4px)}
+.dock .nav{border-top:0;padding-bottom:0}
+.dk{display:flex;gap:10px;padding:8px 12px 4px}
+.dk button{flex:1;border:0;border-radius:12px;height:42px;font-weight:800;font-size:15px;color:#fff;letter-spacing:.04em}
+.dk.open{align-items:center;gap:8px}
+.dk.open .oi{flex:1;min-width:0;font-size:12px;line-height:1.25}.dk.open .oi #o_dir{font-weight:700;font-size:13px}
+.dk.open .big{font-size:15px;font-weight:700;white-space:nowrap;text-align:right}
+.dk.open button{flex:0 0 auto;padding:0 14px;height:38px;font-size:13px;letter-spacing:0}
+
+.island{bottom:34px}
+.tf.ind{color:#8b95a5}
+.info{font-size:12px}.info .il{gap:6px}.info .ir{gap:7px}
