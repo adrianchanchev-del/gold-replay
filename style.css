@@ -1,6 +1,6 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;background:#0d1117;color:#e6edf3;font:15px/1.4 -apple-system,system-ui,Segoe UI,Roboto,sans-serif;overscroll-behavior:none}
-#app{height:100%;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+html,body{margin:0;position:fixed;inset:0;width:100%;height:100%;overflow:hidden;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;background:#0d1117;color:#e6edf3;font:15px/1.4 -apple-system,system-ui,Segoe UI,Roboto,sans-serif;overscroll-behavior:none}
+#app{position:fixed;inset:0;height:100dvh;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
 #view{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .muted{color:#8b95a5}.sm{font-size:12px}.up{color:#26a69a}.dn{color:#ef5350}
 h2{margin:0 0 6px;font-size:22px}h3{margin:0 0 10px}h4{margin:14px 0 4px;font-size:13px;color:#8b95a5;text-transform:uppercase;letter-spacing:.04em}
@@ -91,3 +91,28 @@ select{width:100%;background:#0d1117;color:#e6edf3;border:1px solid #2b3544;bord
 .hd{position:absolute;left:6px;transform:translateY(-50%);pointer-events:auto;touch-action:none;user-select:none;-webkit-user-select:none;padding:5px 10px;border-radius:14px;font-size:12px;font-weight:700;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5);z-index:5}
 .hd.sl{background:#ef5350}.hd.tp{background:#26a69a}.hd.drag{outline:2px solid #fff;font-size:13px}
 .hd span{pointer-events:none}
+
+input,textarea,select{-webkit-user-select:text;user-select:text}
+.rp{overflow:hidden}
+.top{flex:none;padding:6px 8px 0}
+.tfrow{padding:0 0 6px}
+.info{display:flex;align-items:center;gap:6px;font-size:12px;color:#c3cad5;padding:0 2px 6px;font-variant-numeric:tabular-nums}
+.info .sp{flex:1}.info b{font-weight:700}
+#px{position:absolute;top:8px;left:10px;z-index:4;font-size:15px;font-weight:700;color:#e6edf3;background:rgba(19,23,34,.7);padding:2px 8px;border-radius:8px;pointer-events:none}
+.island{position:absolute;left:8px;right:8px;bottom:8px;z-index:7;background:rgba(27,32,48,.94);border:1px solid #2f3547;border-radius:20px;padding:7px;box-shadow:0 8px 28px rgba(0,0,0,.6);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.island .fxbar{margin:0;padding:0;background:none;border:0}
+.island .fxbar button{padding:8px 2px;font-size:11px;line-height:1.1}
+.island .fxbar .endb{flex:0 0 40px;background:#3a2327;color:#ef5350}
+.island #tradebar{padding:0}
+.island .tbtns{margin-top:6px}.island .tbtns button{padding:11px 0;font-size:15px;border-radius:12px}
+.island .open{margin-top:6px}.island .big{font-size:17px}
+.island #o_hint{font-size:11px;margin-top:2px}
+.nav{flex:none;padding-bottom:max(env(safe-area-inset-bottom),6px);background:#0d1117;border-top:1px solid #222a35}
+.nav button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 2px;font-size:10px;font-weight:600}
+.nav svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav button.on svg{stroke:#e6c14b}
+.hd{left:6px}
+#view{overscroll-behavior:contain}
+
+.island .open{margin-top:5px;font-size:12px}.island .open #o_pnl{font-size:15px}
+.island .tbtns button{padding:10px 0}
