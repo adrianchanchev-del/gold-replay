@@ -196,3 +196,5 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 @media (min-width:700px){#modal{align-items:center;justify-content:center}.sheet{max-width:520px;border-radius:18px}}
 
 #toast{top:auto;bottom:130px}
+
+.autob{position:absolute;right:62px;bottom:34px;z-index:6;width:30px;height:26px;border-radius:8px;background:rgba(27,32,48,.94);border:1px solid #2f3547;color:#8b95a5;font-weight:700;font-size:12px;padding:0}.autob.on{color:#e6c14b}

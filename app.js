@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.13.0', BUILD = 'gr-v13';
+  const APP_VERSION = '0.13.1', BUILD = 'gr-v14';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -337,7 +337,7 @@
       '<div class="stats4"><span class="kv"><i>Balance</i><b id="h_bal"></b></span><span class="kv"><i>Equity</i><b id="h_eq"></b></span><span class="kv"><i>Session P&amp;L</i><b id="h_pnl"></b></span><span class="kv"><i>Trades today</i><b id="h_cnt"></b></span></div></div>' +
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
       '<button class="tf ind" id="c_hist" title="Trade history">&#9776;</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
-      '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div>' +
+      '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><button id="c_auto" class="autob on" title="Auto-fit price">A</button>' +
       '<div class="island"><div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_end" class="endb">End</button></div></div></div></div>';
     mountChart(); loadTF(); drawTfBits(); drawTb(); bindDraw();
     $('#tf_menu').onclick = (e) => { e.stopPropagation(); $('#tf_panel').classList.toggle('on'); };
@@ -369,7 +369,7 @@
       timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: '#2a2e39', barSpacing: 9, minBarSpacing: 3 },
       rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.14 } }, crosshair: { mode: 0 },
     });
-    PZ.k = 1; PZ.off = 0;
+    PZ.k = 1; PZ.off = 0; manual = false;
     series = chart.addSeries(LW.CandlestickSeries, {
       upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineVisible: true,
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
@@ -604,8 +604,14 @@
       const dy = Math.max(-200, Math.min(200, e.deltaY));
       if (e.shiftKey) PZ.off = Math.max(-3, Math.min(3, PZ.off - dy * 0.0008));
       else PZ.k = Math.max(0.15, Math.min(12, PZ.k * Math.exp(dy * 0.0025)));
-      series.priceScale().applyOptions({ autoScale: true }); setDirty();
+      manual = false; const ab = $('#c_auto'); if (ab) ab.classList.add('on'); series.priceScale().applyOptions({ autoScale: true }); setDirty();
     }, { capture: true, passive: false });
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('#dtb,.island,.hd,.spw,#c_auto') || e.target === ov) return;
+      if (!manual && PZ.k === 1 && !PZ.off) setManual(true);
+      else if (!manual) { PZ.k = 1; PZ.off = 0; setManual(true); }
+    }, true);
+    $('#c_auto').onclick = () => setManual(false);
     document.addEventListener('keydown', kdel);
   }
   function kdel(e) {
@@ -810,7 +816,13 @@
   // ---------- trade bar / lines ----------
   let lineObjs = {}, trackId = 0, drag = null;
   const isSetup = (t) => S.cur <= (t.i0 == null ? -1 : t.i0);
-  function refit() { try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
+  let manual = false;
+  function refit() { if (manual) return; try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
+  function setManual(on) {
+    manual = on; const a = $('#c_auto'); if (a) a.classList.toggle('on', !on);
+    try { series.priceScale().applyOptions({ autoScale: !on }); } catch (e) {}
+    if (!on) { PZ.k = 1; PZ.off = 0; setDirty(); }
+  }
 
   function drawLines() {
     if (!series) return;
