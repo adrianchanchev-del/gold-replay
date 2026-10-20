@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.11.0', BUILD = 'gr-v11';
+  const APP_VERSION = '0.12.0', BUILD = 'gr-v12';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [5, '5m'], [15, '15m'], [60, '1h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -314,15 +314,18 @@
       '<div class="top"><div class="tfrow">' + tfBtns + '<button class="tf ind" id="c_ind">fx</button></div>' +
       '<div class="info"><div class="il"><span id="h_sess" class="stag"></span><span id="h_time"></span></div><div class="ir"><span id="h_cnt"></span><span class="kv"><i>Bal</i><b id="h_bal"></b></span><span class="kv"><i>Eq</i><b id="h_eq"></b></span></div></div></div>' +
       '<div id="chartwrap"><div id="chart"></div><div id="hnd"></div>' +
-      '<div class="island"><div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next">Next candle</button><button id="c_step">+1m</button><button id="c_sess">Next session</button><button id="c_speed">1x</button><button id="c_end" class="endb">End</button></div></div></div></div>';
+      '<div class="island"><div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_end" class="endb">End</button></div></div></div></div>';
     mountChart(); loadTF();
     document.querySelectorAll('[data-tfs]').forEach((b) => (b.onclick = () => { S.tf = +b.dataset.tfs; document.querySelectorAll('.tf[data-tfs]').forEach((x) => x.classList.toggle('on', x === b)); loadTF(); saveP(); }));
-    $('#c_step').onclick = () => { pause(); advance(1); };
     $('#c_next').onclick = () => { pause(); nextCandle(); };
     $('#c_sess').onclick = () => { pause(); nextSession(); };
     $('#c_play').onclick = () => (timer ? pause() : play());
-    $('#c_speed').textContent = SPEEDS[speedI] + 'x';
-    $('#c_speed').onclick = () => { speedI = (speedI + 1) % SPEEDS.length; $('#c_speed').textContent = SPEEDS[speedI] + 'x'; };
+    const setSp = () => { $('#c_speed').innerHTML = SPEEDS[speedI] + 'x &#9662;'; };
+    setSp();
+    $('#c_menu').innerHTML = SPEEDS.map((v, i) => '<button data-sp="' + i + '">' + v + 'x</button>').join('');
+    $('#c_speed').onclick = (e) => { e.stopPropagation(); $('#c_menu').classList.toggle('on'); };
+    document.querySelectorAll('[data-sp]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); speedI = +b.dataset.sp; setSp(); $('#c_menu').classList.remove('on'); if (timer) { pause(); play(); } }));
+    $('#chartwrap').addEventListener('pointerdown', (e) => { if (!e.target.closest('.spw')) $('#c_menu').classList.remove('on'); });
     $('#c_ind').onclick = () => { pause(); openInd(); };
     $('#c_end').onclick = endSession;
     drawTradebar(); refreshHud(); drawLines();
@@ -685,8 +688,20 @@
       '<div class="kpis"><div><b>' + P.streak + '</b><span>clean streak</span></div><div><b>' + P.bestStreak + '</b><span>best</span></div><div><b>' + n + '</b><span>trades</span></div><div><b>' + (n ? Math.round(avgS) : 0) + '</b><span>avg score %</span></div></div>' +
       '<div class="kpis"><div><b>' + (n ? Math.round(clean / n * 100) : 0) + '%</b><span>fully on-plan</span></div><div><b>' + (n ? Math.round(honest / n * 100) : 0) + '%</b><span>honest reviews</span></div><div><b>' + (n ? Math.round(wins / n * 100) : 0) + '%</b><span>win rate</span></div><div><b>' + avgH.toFixed(1) + '/2</b><span>avg honesty</span></div></div>';
     if (n) h += '<div class="card"><b>Where you leak discipline</b>' + leaks.map((l) => '<div class="srow"><span>' + l[0] + '</span><b class="' + (l[1] ? 'dn' : 'up') + '">' + l[1] + '</b></div>').join('') + '</div>';
-    h += '<h3>Journal</h3>' + (n ? J.slice().reverse().slice(0, 60).map((j) => '<div class="card jr"><div class="jt"><b>' + (j.dir > 0 ? 'LONG' : 'SHORT') + '</b> <span class="muted sm">' + fdate(j.t0) + '</span><span class="sc">' + j.score + '</span></div><div class="' + (j.pnl >= 0 ? 'up' : 'dn') + '">' + fmt(j.pnl) + ' (' + j.r.toFixed(2) + 'R) &middot; ' + j.reason + '</div><div class="muted sm">You said: ' + j.said + ' &middot; verdict: ' + j.verdict + '</div><div class="sm">' + esc(j.note) + '</div></div>').join('') : '<p class="muted">No trades yet. Go place one.</p>') + '</div>';
+    h += '<h3>Journal</h3>' + (n ? J.map((j, ji) => [j, ji]).reverse().slice(0, 60).map((x) => { const j = x[0], ji = x[1]; return '<div class="card jr" data-ji="' + ji + '"><div class="jt"><b>' + (j.dir > 0 ? 'LONG' : 'SHORT') + '</b> <span class="muted sm">' + fdate(j.t0) + '</span><span class="sc">' + j.score + '</span></div><div class="' + (j.pnl >= 0 ? 'up' : 'dn') + '">' + fmt(j.pnl) + ' (' + j.r.toFixed(2) + 'R) &middot; ' + j.reason + '</div><div class="muted sm">You said: ' + j.said + ' &middot; verdict: ' + j.verdict + '</div><div class="sm">' + esc(j.note) + '</div>' + (j.why ? '<div class="sm muted">Why: ' + esc(j.why) + '</div>' : '') + '<div class="muted sm">' + (j.edited ? 'edited &middot; ' : '') + 'tap to edit</div></div>'; }).join('') : '<p class="muted">No trades yet. Go place one.</p>') + '</div>';
     $('#view').innerHTML = h;
+    document.querySelectorAll('[data-ji]').forEach((el) => (el.onclick = () => editJournal(+el.dataset.ji)));
+  }
+  function editJournal(i) {
+    const j = P.journal[i]; if (!j) return;
+    modal('<h3>Edit journal entry</h3><div class="muted sm">' + (j.dir > 0 ? 'LONG' : 'SHORT') + ' &middot; ' + fdate(j.t0) + ' &middot; ' + fmt(j.pnl) + ' (' + j.r.toFixed(2) + 'R)</div>' +
+      '<label class="lbl">Why you took it</label><textarea id="je_why" rows="3">' + esc(j.why || '') + '</textarea>' +
+      '<label class="lbl">Review note</label><textarea id="je_note" rows="4">' + esc(j.note || '') + '</textarea>' +
+      '<p class="muted sm">Scores stay as they were. Only your words change.</p>' +
+      '<button class="btn big" id="je_save">Save</button><button class="btn ghost big" id="je_del">Delete entry</button><button class="btn ghost big" id="je_x">Cancel</button>', 'tall');
+    $('#je_x').onclick = closeModal;
+    $('#je_save').onclick = () => { j.why = $('#je_why').value.trim(); j.note = $('#je_note').value.trim(); j.edited = true; saveP(); closeModal(); renderStats(); toast('Saved'); };
+    $('#je_del').onclick = () => { if (confirm('Delete this entry? XP stays.')) { P.journal.splice(i, 1); saveP(); closeModal(); renderStats(); } };
   }
 
   // ---------- plan ----------

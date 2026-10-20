@@ -148,3 +148,12 @@ input,textarea,select{-webkit-user-select:text;user-select:text}
 .info{font-size:12px}.info .il{gap:6px}.info .ir{gap:7px}
 
 .srow.hon{border-top:1px solid #2a3140;margin-top:6px;padding-top:8px}
+
+.island{left:8px;right:auto;transform:none;width:auto;max-width:none;bottom:34px}
+.island .fxbar button{padding:0 10px;height:34px}
+.island .fxbar button.pl,.island .fxbar .endb{flex:0 0 auto;padding:0 12px}
+.spw{position:relative}.spmenu{display:none;position:absolute;bottom:40px;left:0;background:#1b2030;border:1px solid #2f3547;border-radius:12px;padding:4px;flex-direction:column;gap:2px;z-index:9}
+.spmenu.on{display:flex}.spmenu button{height:32px!important;min-width:56px}
+textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;border:1px solid #2a3140;border-radius:10px;padding:8px;font:inherit}
+.lbl{display:block;margin:10px 0 4px;font-size:12px;color:#8b95a5}
+.jr{cursor:pointer}
