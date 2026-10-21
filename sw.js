@@ -1,5 +1,5 @@
-// Retest service worker. Build: gr-v14
-const V='gr-v14';
+// Retest service worker. Build: gr-v16
+const V='gr-v16';
 const CACHE = V;
 const ASSETS = ['./', 'index.html', 'app.js', 'engine.js', 'patterns.js', 'style.css', 'lightweight-charts.js', 'manifest.json'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS).catch(() => {})).then(() => self.skipWaiting())); });

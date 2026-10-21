@@ -1,4 +1,4 @@
-/* Gold Replay engine: data, candle aggregation, trade simulation, process scoring. No DOM. */
+/* Retest engine: data, candle aggregation, trade simulation, process scoring. No DOM. */
 (function (root) {
   'use strict';
   const SPREAD = 0.30;   // USD per oz, applied half each side on market entry/exit
@@ -124,20 +124,35 @@
     if (!(dist > 0) || !(balance > 0)) return { units: 0, riskUsd: 0, notional: 0, margin: 0, capped: false, dist };
     const riskWanted = balance * riskPct / 100;
     let units = riskWanted / dist;
-    const maxUnits = balance * LEV / entry;
+    const maxUnits = balance * E.LEV / entry;
     let capped = false;
     if (units > maxUnits) { units = maxUnits; capped = true; }
     units = Math.floor(units * 100) / 100;
-    return { units, riskUsd: units * dist, notional: units * entry, margin: units * entry / LEV, capped, dist };
+    return { units, riskUsd: units * dist, notional: units * entry, margin: units * entry / E.LEV, capped, dist };
   };
 
+  // rollover swap + commission for a trade closed (or floating) at minute t
+  E.fees = function (tr, t) {
+    const c = tr.cond; if (!c) return 0;
+    let f = (c.comm || 0) * tr.units / 100;
+    if (c.swap) {
+      let n = 0;
+      for (let d = Math.floor(tr.t0 / 1440); d <= Math.floor(t / 1440); d++) {
+        const r = d * 1440 + 1320; if (!(r > tr.t0 && r <= t)) continue;
+        const w = (d + 4) % 7; if (w === 5 || w === 6) continue;
+        n += w === 3 ? 3 : 1;
+      }
+      f += n * tr.units * (tr.dir > 0 ? c.swapL : c.swapS);
+    }
+    return f;
+  };
   E.openTrade = function (o) {
-    const entry = o.price + (o.dir > 0 ? SPREAD / 2 : -SPREAD / 2);
+    const entry = o.price + (o.dir > 0 ? E.SPREAD / 2 : -E.SPREAD / 2) + o.dir * (o.slip || 0);
     const sz = E.size(o.balance, o.riskPct, entry, o.sl);
     return {
       id: Date.now() + '-' + Math.floor(Math.random() * 1e6),
       dir: o.dir, t0: o.t, entry, sl: o.sl, sl0: o.sl, tp: o.tp, units: sz.units,
-      riskUsd: sz.riskUsd, riskPct: o.riskPct, capped: sz.capped,
+      riskUsd: sz.riskUsd, riskPct: o.riskPct, capped: sz.capped, cond: o.cond || null, slipIn: o.slip || 0,
       rr0: o.tp ? Math.abs(o.tp - entry) / Math.abs(entry - o.sl) : 0,
       check: o.check, note: o.note || '', ctx: o.ctx || {}, widened: false, moved: false,
     };
@@ -165,14 +180,16 @@
   };
 
   E.floating = function (tr, price) {
-    const exit = price - tr.dir * SPREAD / 2;
-    return tr.units * (exit - tr.entry) * tr.dir;
+    const exit = price - tr.dir * E.SPREAD / 2;
+    return tr.units * (exit - tr.entry) * tr.dir - E.fees(tr, E.nowT || tr.t0);
   };
 
-  E.closeTrade = function (tr, price, t, reason) {
-    const exit = reason === 'MANUAL' ? price - tr.dir * SPREAD / 2 : price;
-    tr.exit = exit; tr.t1 = t; tr.reason = reason;
-    tr.pnl = tr.units * (exit - tr.entry) * tr.dir;
+  E.closeTrade = function (tr, price, t, reason, slip) {
+    const mkt = reason !== 'SL' && reason !== 'TP';
+    const exit = (mkt ? price - tr.dir * E.SPREAD / 2 : price) - tr.dir * (slip || 0);
+    tr.exit = exit; tr.t1 = t; tr.reason = reason; tr.slip = slip || 0;
+    tr.fees = E.fees(tr, t);
+    tr.pnl = tr.units * (exit - tr.entry) * tr.dir - tr.fees;
     tr.r = tr.riskUsd > 0 ? tr.pnl / tr.riskUsd : 0;
     return tr;
   };

@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.13.1', BUILD = 'gr-v14';
+  const APP_VERSION = '0.15.0', BUILD = 'gr-v16';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -273,11 +273,12 @@
     const days = dayList().filter((d) => SESSIONS.some((s) => startIdx(d, s[1]) >= 0));
     if (!days.length) { $('#view').innerHTML = '<div class="page"><h2>No data</h2></div>'; return; }
     if (selDay == null || !days.includes(selDay)) selDay = days[days.length - 1];
+    const a0 = curAcct();
     const d0 = fmtDay(days[0]), d1 = fmtDay(days[days.length - 1]);
     $('#view').innerHTML = '<div class="page"><h2>New session</h2><p class="muted">Real spot gold (XAUUSD) 1-minute data. The future is hidden and revealed as you step forward.</p>' +
-      '<div class="card"><label>Day</label><select id="s_day">' + days.slice().reverse().map((d) => '<option value="' + d + '"' + (d === selDay ? ' selected' : '') + '>' + fmtDay(d) + '</option>').join('') + '</select>' +
+      '<div class="card" id="ac_box"></div><div class="card"><label>Day</label><select id="s_day">' + days.slice().reverse().map((d) => '<option value="' + d + '"' + (d === selDay ? ' selected' : '') + '>' + fmtDay(d) + '</option>').join('') + '</select>' +
       '<label>Session (UTC start time)</label><div class="chips" id="s_sess"></div>' +
-      '<label>Starting balance</label><input id="s_bal" type="number" inputmode="decimal" value="' + P.plan.balance + '">' +
+      '<label>Starting balance</label><input id="s_bal" type="number" inputmode="decimal" value="' + (a0 ? a0.bal : P.plan.balance) + '"' + (a0 ? ' disabled' : '') + '>' +
       '<button class="btn big" id="s_go">Begin session</button><button class="btn ghost big" id="s_rand">Random day and session</button>' +
       '<p class="muted sm">Data: ' + d0.slice(5) + ' to ' + d1.slice(5) + ' &middot; ' + days.length + ' trading days &middot; more days are added automatically.</p></div>' +
       '<div class="card"><b>Your risk rules</b><div class="muted">' + P.plan.risk.pct + '% per trade &middot; min RR ' + P.plan.risk.minRR + ' &middot; ' + P.plan.risk.maxTrades + ' trades/day &middot; ' + P.plan.risk.dailyLoss + '% daily loss limit</div></div></div>';
@@ -290,25 +291,352 @@
     $('#s_day').onchange = () => { selDay = +$('#s_day').value; drawSess(); };
     $('#s_rand').onclick = () => {
       const opts = []; days.forEach((d) => SESSIONS.forEach((s, i) => { if (startIdx(d, s[1]) >= 0) opts.push([d, i]); }));
-      const pick = opts[Math.floor(Math.random() * opts.length)]; selDay = pick[0]; selSess = pick[1]; begin();
+      const a2 = curAcct(), ok2 = a2 && a2.lastT != null ? opts.filter((o) => startIdx(o[0], SESSIONS[o[1]][1]) >= 0 && E.t(startIdx(o[0], SESSIONS[o[1]][1])) >= a2.lastT) : opts;
+      if (!ok2.length) { toast('No later session left for this account'); return; }
+      const pick = ok2[Math.floor(Math.random() * ok2.length)]; selDay = pick[0]; selSess = pick[1]; begin();
     };
     $('#s_go').onclick = begin;
+    bindAcctBox(a0);
     function begin() {
-      const bal = Math.max(100, +$('#s_bal').value || 1000), idx = startIdx(selDay, SESSIONS[selSess][1]);
+      const a1 = curAcct(), idx = startIdx(selDay, SESSIONS[selSess][1]);
+      const bal = a1 ? a1.bal : Math.max(100, +$('#s_bal').value || 1000);
       if (idx < 0) { toast('No data for that session'); return; }
       const t = E.t(idx);
-      S = P.session = { dv: DV, cur: idx, tf: (P.set && P.set.tf) || 15, startBal: bal, balance: bal, trades: 0, open: null, dayKey: Math.floor(t / 1440), dayStartBal: bal, dayTrades: 0, startT: t };
-      saveP(); showTab('replay');
+      if (a1 && a1.status !== 'active') { toast('This account is ' + a1.status + '. Start a new attempt first.'); return; }
+      if (a1 && a1.lastT != null && t < a1.lastT) { toast('This account is already at ' + fdate(a1.lastT).replace(' UTC', '') + '. Pick a later session.'); return; }
+      S = P.session = { dv: DV, cur: idx, tf: (P.set && P.set.tf) || 15, vid: Date.now(), startBal: bal, balance: bal, trades: 0, open: null, dayKey: Math.floor(t / 1440), dayStartBal: bal, dayTrades: 0, startT: t, acct: a1 ? a1.id : null, alerts: [] };
+      if (a1) {
+        if (a1.stage === 'phase' && a1.phaseDay == null) a1.phaseDay = S.dayKey;
+        if (a1.stage === 'funded' && a1.cycleDay == null) a1.cycleDay = S.dayKey;
+        if (a1.dayKey !== S.dayKey) acctDay(); else { S.dayStartBal = a1.dayStart; S.dayTrades = a1.dTr || 0; }
+        S.dayStartBal = a1.dayStart; a1.mcall = 0; a1.timeUp = false;
+      }
+      saveP(); showTab('replay'); setTimeout(flushAlerts, 300);
     }
   }
 
+  // ---------- news calendar (official BLS + Federal Reserve dates, Jan to Apr 2026) ----------
+  // Covers CPI, jobs report, PPI, FOMC decisions and minutes. Not covered: GDP, PCE, ISM, weekly jobless claims.
+  const NEWS = (() => {
+    const out = [], U = (m, d, h, mi) => Math.floor(Date.UTC(2026, m - 1, d, h, mi) / 60000);
+    const add = (name, imp, m, d, h, mi) => out.push({ t: U(m, d, h, mi), name, imp });
+    // 08:30 ET = 13:30 UTC until 8 Mar 2026, 12:30 UTC after. 14:00 ET = 19:00 / 18:00 UTC.
+    [[1, 9, 13, 30], [2, 11, 13, 30], [3, 6, 13, 30], [4, 3, 12, 30]].forEach((x) => add('US jobs report (NFP)', 'high', x[0], x[1], x[2], x[3]));
+    [[1, 13, 13, 30], [2, 13, 13, 30], [3, 11, 12, 30]].forEach((x) => add('US CPI', 'high', x[0], x[1], x[2], x[3]));
+    [[1, 28, 19, 0], [3, 18, 18, 0]].forEach((x) => add('FOMC rate decision', 'high', x[0], x[1], x[2], x[3]));
+    [[1, 14, 13, 30], [1, 30, 13, 30], [2, 27, 13, 30], [3, 18, 12, 30]].forEach((x) => add('US PPI', 'med', x[0], x[1], x[2], x[3]));
+    [[2, 18, 19, 0], [4, 8, 18, 0]].forEach((x) => add('FOMC minutes', 'med', x[0], x[1], x[2], x[3]));
+    return out.sort((a, b) => a.t - b.t);
+  })();
+  const NEWS_LAST = NEWS[NEWS.length - 1].t;
+  function newsAt(t, win, level) {
+    for (let i = 0; i < NEWS.length; i++) {
+      const e = NEWS[i]; if (e.t > t + win) break;
+      if (Math.abs(e.t - t) <= win && (level === 'all' || e.imp === 'high')) return e;
+    }
+    return null;
+  }
+  const hhmm = (t) => { const m = ((t % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0') + ' UTC'; };
+
+  // ---------- accounts: funded prep + live ----------
+  const curAcct = () => (P.accts || []).find((x) => x.id === P.curAcct) || null;
+  const AC = () => (P && P.accts && S && S.acct ? P.accts.find((x) => x.id === S.acct) || null : null);
+  const dowOf = (t) => (Math.floor(t / 1440) + 4) % 7; // 0 = Sunday
+  function spreadFor(t, a) {
+    if (!a || !a.cond) return 0.30;
+    const c = a.cond, base = { tight: 0.2, normal: 0.3, wide: 0.5 }[c.spreadLvl || 'normal'];
+    if (!c.varSpread) return base;
+    const m = ((t % 1440) + 1440) % 1440; let k = 1;
+    if (m >= 1260 && m < 1380) k = 3.5; else if (m < 420) k = 1.4;
+    if (newsAt(t, 3, 'all')) k = Math.max(k, 8); else if (newsAt(t, 15, 'high')) k = Math.max(k, 2);
+    return +(base * k).toFixed(2);
+  }
+  function slipAmt(t, c) {
+    const lvl = { low: 0.5, normal: 1, high: 2 }[c.slipLvl || 'normal'], mx = (newsAt(t, 5, 'all') ? 1.2 : 0.25) * lvl;
+    let v = Math.random() * mx; if (Math.random() < 0.2) v = -v * 0.5; return +v.toFixed(2);
+  }
+  function applyEnv() {
+    const a = AC(); let lev = 20, sp = 0.30, real = false;
+    if (a) { lev = a.lev || 20; if (a.cond) { real = !!a.cond.varSpread; sp = spreadFor(S ? E.t(S.cur) : 0, a); } }
+    E.LEV = lev; E.SPREAD = sp; E.REAL = real; E.nowT = S ? E.t(S.cur) : 0;
+  }
+  function tradeCond(a) { if (!a) return null; const c = a.type === 'live' ? a.cond : { comm: (a.cfg && a.cfg.comm) || 0 }; return (c.comm || c.swap) ? { comm: c.comm || 0, swap: !!c.swap, swapL: 0.20, swapS: 0.05 } : null; }
+
+  const ACT_STAGE = (a) => (a.type === 'live' ? 'Live' : a.status === 'failed' ? 'Failed' : a.stage === 'funded' ? 'Funded' : 'Phase ' + (a.phase + 1) + '/' + a.cfg.ph.length);
+  function acctInit(a) {
+    const size = a.type === 'live' ? a.size0 : a.cfg.size;
+    Object.assign(a, { status: 'active', bal: size, base: size, hw: size, days: {}, void: 0, dayKey: null, dayStart: size, phaseDay: null, lastT: null, lastDay: null, hint: 0, timeUp: false, warned: false, fail: null });
+    a.lev = a.type === 'live' ? a.lev : a.cfg.lev;
+    if (a.type === 'funded') { a.phase = 0; a.stage = a.cfg.ph.length ? 'phase' : 'funded'; if (a.stage === 'funded') { a.cycleDay = null; } }
+    return a;
+  }
+  function acctM(a, eq) {
+    const c = a.cfg || {}, size = a.base, days = a.days || {}, vals = Object.keys(days).map((k) => days[k]);
+    const cp = vals.reduce((x, y) => x + y, 0), best = vals.length ? Math.max.apply(null, vals) : 0, share = cp > 0 && best > 0 ? best / cp * 100 : 0;
+    const ph = a.type === 'funded' && a.stage === 'phase' ? c.ph[a.phase] : null, target = ph ? size * ph.t / 100 : 0;
+    const dLevel = c.dailyDD ? a.dayStart - size * c.dailyDD / 100 : null;
+    let mLevel = null;
+    if (c.maxDD) {
+      const trail = (a.hw || size) - size * c.maxDD / 100;
+      mLevel = c.maxMode === 'trailing' ? trail : c.maxMode === 'lock' ? Math.min(size, trail) : size * (1 - c.maxDD / 100);
+    }
+    const dUsed = dLevel != null ? Math.max(0, (a.dayStart - eq) / (a.dayStart - dLevel)) : 0, mUsed = mLevel != null ? Math.max(0, (a.hw - eq) / ((a.hw || size) - mLevel)) : 0;
+    return { cp, best, share, ph, target, dLevel, mLevel, dUsed, mUsed, tdays: vals.length, consOK: !c.cons || share <= c.cons };
+  }
+  function breachReason(a, eq) {
+    const m = acctM(a, eq);
+    if (m.dLevel != null && eq <= m.dLevel + 1e-9) return 'Daily drawdown limit hit';
+    if (m.mLevel != null && eq <= m.mLevel + 1e-9) return 'Max drawdown limit hit';
+    if (a.type === 'live' && eq <= 0.5) return 'Account blown';
+    return null;
+  }
+  function pushAlert(o) { S.alerts = S.alerts || []; S.alerts.push(o); }
+  function flushAlerts() {
+    const mo = $('#modal'); if (!S || !S.alerts || !S.alerts.length || (mo && mo.classList.contains('on'))) return;
+    const al = S.alerts.shift(); saveP();
+    modal('<h3>' + al.title + '</h3>' + al.html + '<button class="btn big" id="al_ok">' + (al.kind === 'fail' ? 'End session' : 'OK') + '</button>', 'tall nodismiss');
+    $('#al_ok').onclick = () => { if (al.kind === 'fail') { closeModal(); runEnd(); } else { closeModal(); setTimeout(flushAlerts, 40); } };
+  }
+  function acctFail(a, reason) {
+    a.status = 'failed'; a.fail = { reason, t: E.t(S.cur) };
+    pushAlert({ kind: 'fail', title: a.type === 'live' ? 'Account closed' : 'Challenge failed', html: '<p class="dn"><b>' + esc(reason) + '</b></p><p class="muted sm">' + (a.type === 'live' ? 'Your live account balance reached zero.' : 'The rules of this account were broken. You can start a new attempt from the account card.') + '</p>' });
+    saveP();
+  }
+  function acctClose(t) {
+    const a = AC(); if (!a) return;
+    a.bal = S.balance; a.lastT = t.t1; a.lastDay = Math.floor(t.t1 / 1440);
+    const dk = Math.floor(t.t1 / 1440), c = a.cfg || {}; let counted = t.pnl;
+    if (a.type === 'funded' && c.minHold && t.t1 - t.t0 < c.minHold && t.pnl > 0) { counted = 0; t.voided = true; pushAlert({ kind: 'info', title: 'Profit not counted', html: '<p>This trade was held under ' + c.minHold + ' min, so its profit does not count toward your target or consistency.</p>' }); }
+    a.days[dk] = (a.days[dk] || 0) + counted; a.hw = Math.max(a.hw || 0, a.bal);
+    const br = breachReason(a, a.bal);
+    if (br) { acctFail(a, br); return; }
+    if (a.type === 'funded' && a.stage === 'phase') acctPass(a);
+    if (a.timeUp && a.status === 'active' && a.stage === 'phase') acctFail(a, 'Time limit for this phase ran out');
+  }
+  function acctPass(a) {
+    const c = a.cfg, m = acctM(a, a.bal), ph = m.ph; if (!ph || m.cp < m.target) return;
+    const needD = ph.d || 0, consReq = c.cons && c.consScope === 'all';
+    if (m.tdays < needD || (consReq && !m.consOK)) {
+      if (!a.hint) { a.hint = 1; pushAlert({ kind: 'info', title: 'Profit target reached', html: '<p>Not passed yet:</p><ul>' + (m.tdays < needD ? '<li>Trade on ' + (needD - m.tdays) + ' more day(s) (min ' + needD + ')</li>' : '') + (consReq && !m.consOK ? '<li>Consistency: your best day is ' + m.share.toFixed(0) + '% of profit, the limit is ' + c.cons + '%. Keep trading to dilute it.</li>' : '') + '</ul>' }); }
+      return;
+    }
+    const last = a.phase >= c.ph.length - 1;
+    a.hint = 0; a.timeUp = false; a.days = {}; a.void = 0; a.bal = a.base = c.size; a.hw = c.size; a.dayStart = c.size; S.balance = c.size; S.startBal = c.size; S.dayStartBal = c.size;
+    if (last) {
+      a.stage = 'funded'; a.cycleDay = a.lastDay; a.phaseDay = a.lastDay;
+      pushAlert({ kind: 'info', title: 'You are funded', html: '<p>All phases passed. The balance is reset to <b>' + fmt(c.size) + '</b> and payout rules now apply (' + c.split + '% split).</p><p class="muted sm">Open the account card to see when you can request a payout.</p>' });
+    } else {
+      a.phase++; a.phaseDay = a.lastDay;
+      pushAlert({ kind: 'info', title: 'Phase ' + a.phase + ' passed', html: '<p>Moving to phase ' + (a.phase + 1) + ' of ' + c.ph.length + '. Balance reset to <b>' + fmt(c.size) + '</b>. Next target: ' + c.ph[a.phase].t + '%.</p>' });
+    }
+    saveP();
+  }
+  function acctDay() {
+    const a = AC(); if (!a) return;
+    a.dayKey = S.dayKey; a.dayStart = S.balance; a.warned = false;
+    const ph = a.type === 'funded' && a.stage === 'phase' ? a.cfg.ph[a.phase] : null;
+    if (ph && ph.md && a.phaseDay != null && S.dayKey - a.phaseDay > ph.md) { if (S.open) a.timeUp = true; else if (a.status === 'active') acctFail(a, 'Time limit for this phase ran out'); }
+  }
+  // returns a forced-close reason, or null
+  function acctForce() {
+    const a = AC(); if (!a || a.status !== 'active') return null;
+    const t = E.t(S.cur), c = a.cfg || {}, eq = equity();
+    a.hw = Math.max(a.hw || 0, eq); a.lastT = t; a.lastDay = Math.floor(t / 1440);
+    if (!S.open) return null;
+    if (breachReason(a, eq) || a.timeUp) return 'BREACH';
+    if (c.noWeekend) { const d = dowOf(t), m = t % 1440; if ((d === 5 && m >= 1290) || d === 6) return 'WEEKEND'; }
+    if (a.type === 'live' && a.cond.margin) {
+      const used = S.open.units * S.open.entry / E.LEV, lvl = used > 0 ? eq / used * 100 : 999;
+      if (lvl < (a.cond.stopOut || 50)) return 'STOPOUT';
+      if (lvl < 100 && !a.mcall) { a.mcall = 1; toast('Margin call: margin level ' + Math.round(lvl) + '%'); } else if (lvl >= 130) a.mcall = 0;
+    }
+    const m = acctM(a, eq);
+    if (m.dLevel != null && m.dUsed >= 0.8 && !a.warned) { a.warned = true; toast('80% of your daily drawdown is used'); }
+    return null;
+  }
+  function openGate(a, dir) {
+    if (S.lockUntil && Date.now() < S.lockUntil) return 'No connection. Reconnecting...';
+    if (!a) return null;
+    if (a.status !== 'active') return 'This account is ' + a.status + '.';
+    const c = a.cfg || {}, t = E.t(S.cur);
+    if (a.type === 'funded') {
+      if (c.news !== 'off') { const ev = newsAt(t, c.newsWin, c.news === 'all' ? 'all' : 'high'); if (ev) return 'No-news rule: ' + ev.name + ' at ' + hhmm(ev.t) + '. Wait ' + c.newsWin + ' min after it.'; }
+      if (c.maxTrades && S.dayTrades >= c.maxTrades) return 'Max trades per day reached (' + c.maxTrades + ').';
+      if (c.noWeekend) { const d = dowOf(t), m = t % 1440; if ((d === 5 && m >= 1230) || d === 6) return 'Weekend rule: no new trades near the Friday close.'; }
+    }
+    return null;
+  }
+  function closeGate(a) {
+    if (S.lockUntil && Date.now() < S.lockUntil) return 'No connection. Reconnecting...';
+    if (a && a.type === 'funded' && a.cfg.news !== 'off' && a.cfg.newsApply === 'both') { const ev = newsAt(E.t(S.cur), a.cfg.newsWin, a.cfg.news === 'all' ? 'all' : 'high'); if (ev) return 'No-news rule: cannot close during ' + ev.name + ' (' + hhmm(ev.t) + ').'; }
+    return null;
+  }
+
+  // ---------- payouts ----------
+  function payoutCheck(a) {
+    const c = a.cfg, m = acctM(a, a.bal), dNow = a.lastDay != null ? a.lastDay : 0, since = dNow - (a.cycleDay == null ? dNow : a.cycleDay);
+    const cap = c.pMax ? c.size * c.pMax / 100 : Infinity, gross = Math.max(0, Math.min(m.cp, cap));
+    const rows = [['Days since ' + (a.payouts && a.payouts.length ? 'last payout' : 'funded') + ': ' + since + ' / ' + c.pMinDays, since >= c.pMinDays], ['Trading days this cycle: ' + m.tdays + ' / ' + c.pMinTD, m.tdays >= c.pMinTD],
+      ['Profit this cycle: ' + fmt(m.cp) + (c.pMinProfit ? ' (min ' + fmt(c.size * c.pMinProfit / 100) + ')' : ''), m.cp > 0 && m.cp >= c.size * c.pMinProfit / 100]];
+    if (c.pCons && c.cons) rows.push(['Best day ' + m.share.toFixed(0) + '% of profit (max ' + c.cons + '%)', m.consOK]);
+    return { rows, ok: rows.every((r) => r[1]) && gross > 0 && a.stage === 'funded', gross, net: gross * c.split / 100 };
+  }
+  function doPayout(a) {
+    const p = payoutCheck(a); if (!p.ok) return;
+    a.bal -= p.gross; a.hw = a.bal; a.dayStart = a.bal; a.earned = (a.earned || 0) + p.net; a.payouts = a.payouts || [];
+    a.payouts.push({ t: a.lastT, gross: p.gross, net: p.net }); a.days = {}; a.cycleDay = a.lastDay; saveP();
+  }
+
+  // ---------- account UI ----------
+  const pbar = (frac, bad) => '<div class="pbar"><i class="' + (bad ? 'bad' : '') + '" style="width:' + Math.max(0, Math.min(100, frac * 100)).toFixed(1) + '%"></i></div>';
+  function acctPanelHtml(a, eq) {
+    const c = a.cfg || {}, m = acctM(a, eq);
+    let h = '<div class="srow"><span>Status</span><b class="' + (a.status === 'active' ? 'up' : 'dn') + '">' + ACT_STAGE(a) + (a.status !== 'active' ? ' (' + a.status + ')' : '') + '</b></div>' +
+      '<div class="srow"><span>Balance / Equity</span><b>' + fmt(a.bal) + ' / ' + fmt(eq) + '</b></div><div class="srow"><span>Leverage</span><b>1:' + a.lev + '</b></div>';
+    if (a.fail) h += '<p class="dn sm">' + esc(a.fail.reason) + '</p>';
+    if (a.type === 'live') {
+      const o = S && S.open && S.acct === a.id ? S.open : null, used = o ? o.units * o.entry / E.LEV : 0;
+      h += '<div class="srow"><span>Total P&amp;L</span><b class="' + (eq - a.size0 >= 0 ? 'up' : 'dn') + '">' + fmt(eq - a.size0) + '</b></div>' + (o ? '<div class="srow"><span>Margin level</span><b>' + Math.round(eq / used * 100) + '%</b></div>' : '');
+      const cd = a.cond, on = [cd.varSpread && 'variable spread', cd.slip && 'slippage', cd.comm && '$' + cd.comm + '/lot commission', cd.swap && 'overnight swap', cd.margin && 'margin call + stop-out ' + cd.stopOut + '%', cd.requote && 'requotes', cd.disc && 'random disconnects'].filter(Boolean);
+      h += '<h4>Market conditions</h4><p class="sm">' + (on.length ? on.join(', ') : 'None (clean fills)') + '</p>';
+      return h;
+    }
+    if (m.ph) {
+      h += '<h4>Profit target ' + m.ph.t + '% (' + fmt(m.target) + ')</h4>' + pbar(m.cp / m.target) + '<div class="muted sm">' + fmt(m.cp) + ' of ' + fmt(m.target) + ' &middot; trading days ' + m.tdays + (m.ph.d ? ' / ' + m.ph.d : '') + (m.ph.md ? ' &middot; time limit ' + m.ph.md + ' days' : '') + '</div>';
+    }
+    if (m.dLevel != null) h += '<h4>Daily drawdown ' + c.dailyDD + '%</h4>' + pbar(m.dUsed, m.dUsed > 0.7) + '<div class="muted sm">Floor today ' + fmt(m.dLevel) + ' &middot; ' + fmt(Math.max(0, eq - m.dLevel)) + ' left</div>';
+    if (m.mLevel != null) h += '<h4>Max drawdown ' + c.maxDD + '% (' + ({ static: 'static', trailing: 'trailing', lock: 'trailing, locks at start' }[c.maxMode]) + ')</h4>' + pbar(m.mUsed, m.mUsed > 0.7) + '<div class="muted sm">Floor ' + fmt(m.mLevel) + ' &middot; ' + fmt(Math.max(0, eq - m.mLevel)) + ' left</div>';
+    if (c.cons) h += '<h4>Consistency (best day max ' + c.cons + '% of profit)</h4>' + pbar(m.share / c.cons, !m.consOK) + '<div class="muted sm">Best day ' + fmt(m.best) + ' = ' + m.share.toFixed(0) + '% of ' + fmt(m.cp) + (c.consScope === 'funded' && a.stage === 'phase' ? ' (applies once funded)' : '') + '</div>';
+    if (a.stage === 'funded') {
+      const p = payoutCheck(a);
+      h += '<h4>Payout (' + c.split + '% split)</h4>' + p.rows.map((r) => '<div class="srow"><span>' + r[0] + '</span><b class="' + (r[1] ? 'up' : 'dn') + '">' + (r[1] ? 'OK' : 'no') + '</b></div>').join('') +
+        '<div class="muted sm" style="margin-top:6px">Available now: ' + fmt(p.gross) + ' gross, ' + fmt(p.net) + ' to you. Total paid to you so far: ' + fmt(a.earned || 0) + ' (' + (a.payouts || []).length + ' payouts).</div>';
+    }
+    const rules = ['Leverage 1:' + c.lev, c.news !== 'off' && ('No trading ' + c.newsWin + ' min around ' + (c.news === 'all' ? 'high + medium' : 'high-impact') + ' news' + (c.newsApply === 'both' ? ' (open and close)' : ' (open)')), c.noWeekend && 'No weekend holding', c.minHold && 'Min hold ' + c.minHold + ' min or the profit does not count', c.maxRisk && 'Max risk per trade ' + c.maxRisk + '%', c.maxTrades && 'Max ' + c.maxTrades + ' trades/day', c.comm && '$' + c.comm + '/lot commission'].filter(Boolean);
+    return h + '<h4>Other rules</h4><p class="sm">' + rules.join(' &middot; ') + '</p>';
+  }
+  function openAcctPanel(a, canPay) {
+    const eq = a === AC() ? equity() : a.bal;
+    let h = '<h3>' + esc(a.name) + '</h3>' + acctPanelHtml(a, eq);
+    if (canPay && a.type === 'funded' && a.stage === 'funded') h += '<button class="btn big" id="ap_pay"' + (payoutCheck(a).ok ? '' : ' disabled') + '>Request payout</button>';
+    modal(h + '<button class="btn ghost big" id="ap_x">Close</button>', 'tall');
+    $('#ap_x').onclick = closeModal;
+    const pb = $('#ap_pay'); if (pb) pb.onclick = () => { const p = payoutCheck(a); doPayout(a); closeModal(); toast('Payout: ' + fmt(p.net) + ' to you'); renderStart(); };
+  }
+  function acctChip() {
+    const a = AC(), el = $('#h_acct'); if (!el) return;
+    if (!a) { el.style.display = 'none'; return; }
+    const eq = equity(), m = acctM(a, eq); el.style.display = '';
+    const used = Math.max(m.dUsed || 0, m.mUsed || 0);
+    el.textContent = a.name.slice(0, 12) + ' \u00b7 ' + ACT_STAGE(a) + (m.dLevel != null || m.mLevel != null ? ' \u00b7 ' + Math.round(used * 100) + '% DD' : '');
+    el.className = 'stag acc' + (a.status !== 'active' || used > 0.8 ? ' bad' : used > 0.5 ? ' warn' : '');
+    el.onclick = () => { pause(); openAcctPanel(a, false); };
+  }
+
+  // ---------- account creation form ----------
+  let AD = null;
+  const getp = (o, k) => k.split('.').reduce((x, p) => (x == null ? x : x[p]), o);
+  function setp(o, k, v) { const ks = k.split('.'); const last = ks.pop(); const t = ks.reduce((x, p) => x[p], o); t[last] = v; }
+  const FUND_PRESETS = {
+    two: { name: 'Two-phase challenge', size: 10000, phases: 2, ph: [{ t: 8, d: 4, md: 0 }, { t: 5, d: 4, md: 0 }, { t: 5, d: 4, md: 0 }], dailyDD: 5, maxDD: 10, maxMode: 'static', cons: 0, consScope: 'funded', split: 80, pMinDays: 14, pMinTD: 5, pMinProfit: 0, pMax: 0, pCons: true },
+    one: { name: 'One-phase challenge', size: 10000, phases: 1, ph: [{ t: 10, d: 4, md: 0 }, { t: 5, d: 4, md: 0 }, { t: 5, d: 4, md: 0 }], dailyDD: 4, maxDD: 6, maxMode: 'trailing', cons: 0, consScope: 'funded', split: 80, pMinDays: 14, pMinTD: 5, pMinProfit: 0, pMax: 0, pCons: true },
+    inst: { name: 'Instant funded', size: 10000, phases: 0, ph: [{ t: 8, d: 4, md: 0 }, { t: 5, d: 4, md: 0 }, { t: 5, d: 4, md: 0 }], dailyDD: 3, maxDD: 6, maxMode: 'lock', cons: 30, consScope: 'funded', split: 70, pMinDays: 7, pMinTD: 5, pMinProfit: 2, pMax: 0, pCons: true },
+  };
+  const fundDraft = (k) => Object.assign({ type: 'funded', news: 'off', newsWin: 2, newsApply: 'both', noWeekend: false, minHold: 0, maxRisk: 0, lev: 100, maxTrades: 0, comm: 0 }, JSON.parse(JSON.stringify(FUND_PRESETS[k || 'two'])));
+  const LIVE_PRESETS = { real: { varSpread: true, slip: true, comm: 7, swap: true, margin: true, requote: true, disc: false, slipLvl: 'normal', spreadLvl: 'normal' }, light: { varSpread: true, slip: false, comm: 0, swap: false, margin: true, requote: false, disc: false, slipLvl: 'low', spreadLvl: 'normal' }, clean: { varSpread: false, slip: false, comm: 0, swap: false, margin: false, requote: false, disc: false, slipLvl: 'low', spreadLvl: 'normal' } };
+  const liveDraft = (k) => Object.assign({ type: 'live', name: 'Live account', bal: 1000, lev: 20, stopOut: 50 }, LIVE_PRESETS[k || 'real']);
+  function acctForm() {
+    const D = AD, sc = (document.querySelector('#modal .sheet') || {}).scrollTop || 0;
+    const num = (k, l, hint) => '<label class="lbl">' + l + '</label><input type="number" inputmode="decimal" step="any" data-f="' + k + '" value="' + getp(D, k) + '">' + (hint ? '<div class="muted sm">' + hint + '</div>' : '');
+    const sel = (k, l, opts, hint) => '<label class="lbl">' + l + '</label><select data-f="' + k + '">' + opts.map((o) => '<option value="' + o[0] + '"' + (String(getp(D, k)) === String(o[0]) ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' + (hint ? '<div class="muted sm">' + hint + '</div>' : '');
+    const chk = (k, l) => '<label class="inl"><input type="checkbox" data-f="' + k + '"' + (getp(D, k) ? ' checked' : '') + '> ' + l + '</label>';
+    const LEVS = [5, 10, 20, 30, 50, 100, 200, 500].map((v) => [v, '1:' + v]);
+    let h = '<h3>New account</h3><label class="lbl">Type</label><div class="seg"><button data-type="funded" class="' + (D.type === 'funded' ? 'sel' : '') + '">Funded prep</button><button data-type="live" class="' + (D.type === 'live' ? 'sel' : '') + '">Live account</button></div>' +
+      '<label class="lbl">Name</label><input type="text" data-f="name" value="' + esc(D.name) + '">';
+    if (D.type === 'funded') {
+      h += '<label class="lbl">Start from a template (you can edit everything)</label><div class="chips"><span class="chip add" data-pre="two">2-phase</span><span class="chip add" data-pre="one">1-phase</span><span class="chip add" data-pre="inst">Instant funded</span></div>' +
+        num('size', 'Account size ($)') + sel('phases', 'Phases to pass before funded', [[0, 'None (instant funded)'], [1, '1 phase'], [2, '2 phases'], [3, '3 phases']]);
+      for (let i = 0; i < D.phases; i++) h += '<h4>Phase ' + (i + 1) + '</h4><div class="grid3">' + num('ph.' + i + '.t', 'Target %') + num('ph.' + i + '.d', 'Min days') + num('ph.' + i + '.md', 'Max days', '0 = none') + '</div>';
+      h += '<h4>Drawdown</h4><div class="grid2">' + num('dailyDD', 'Daily drawdown %', '0 = off. From the day\'s starting balance.') + num('maxDD', 'Max drawdown %', '0 = off') + '</div>' +
+        sel('maxMode', 'Max drawdown type', [['static', 'Static (from start balance)'], ['trailing', 'Trailing (follows highest equity)'], ['lock', 'Trailing, stops trailing at start balance']]) +
+        '<h4>Rules</h4>' + num('cons', 'Consistency rule: best day max % of total profit', '0 = off') + sel('consScope', 'Consistency applies', [['funded', 'Funded stage + payouts only'], ['all', 'Every phase too']]) +
+        sel('news', 'No-news rule', [['off', 'Off'], ['high', 'High-impact news (CPI, jobs, FOMC)'], ['all', 'High + medium (adds PPI, FOMC minutes)']], 'Calendar covers Jan to Apr 2026: CPI, jobs report, PPI, FOMC decisions and minutes. Not GDP, PCE, ISM or jobless claims.') +
+        sel('newsWin', 'News window', [[2, '2 min either side'], [5, '5 min either side'], [10, '10 min either side'], [30, '30 min either side']]) + sel('newsApply', 'Blocks', [['both', 'Opening and manual closing'], ['open', 'Opening only']]) +
+        chk('noWeekend', 'No weekend holding (auto-close Friday 21:30 UTC)') +
+        '<div class="grid2">' + sel('minHold', 'Min hold time', [[0, 'None'], [1, '1 min'], [2, '2 min'], [5, '5 min'], [15, '15 min']], 'Profit from faster trades does not count') + num('maxRisk', 'Max risk per trade %', '0 = off') + '</div>' +
+        '<div class="grid2">' + sel('lev', 'Leverage', LEVS) + num('maxTrades', 'Max trades per day', '0 = off') + '</div>' + num('comm', 'Commission $ per lot (100 oz)', '0 = none') +
+        '<h4>Payout rules</h4><div class="grid2">' + num('split', 'Profit split %') + num('pMinDays', 'Days before payout') + num('pMinTD', 'Min trading days') + num('pMinProfit', 'Min profit % of size') + '</div>' + num('pMax', 'Max payout % of size per request', '0 = no cap') + chk('pCons', 'Consistency rule must pass for payouts');
+    } else {
+      h += '<label class="lbl">Condition preset</label><div class="chips"><span class="chip add" data-lpre="real">Realistic</span><span class="chip add" data-lpre="light">Light</span><span class="chip add" data-lpre="clean">Clean fills</span></div>' +
+        num('bal', 'Starting balance ($)') + sel('lev', 'Leverage', LEVS, 'Position size is capped by leverage. Lower leverage means smaller positions.') +
+        '<h4>Market conditions</h4>' + chk('varSpread', 'Variable spread (wider at rollover, Asia, and around news)') + sel('spreadLvl', 'Base spread', [['tight', 'Tight $0.20'], ['normal', 'Normal $0.30'], ['wide', 'Wide $0.50']]) +
+        chk('slip', 'Slippage on market orders and stops (worse during news)') + sel('slipLvl', 'Slippage size', [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']]) +
+        num('comm', 'Commission $ per lot (100 oz)', '0 = none') + chk('swap', 'Overnight swap (charged at 22:00 UTC, triple on Wednesday)') +
+        chk('margin', 'Margin call and stop-out') + num('stopOut', 'Stop-out margin level %') + chk('requote', 'Requotes (orders sometimes rejected, mostly around news)') + chk('disc', 'Random disconnects while playing (6 s without trading)');
+    }
+    h += '<div class="tbtns"><button class="ghost2" id="ac_cancel">Cancel</button><button class="buy" id="ac_create">Create account</button></div>';
+    modal(h, 'tall'); const sh = document.querySelector('#modal .sheet'); if (sh) sh.scrollTop = sc;
+    document.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => { AD = b.dataset.type === 'funded' ? fundDraft('two') : liveDraft('real'); acctForm(); }));
+    document.querySelectorAll('[data-pre]').forEach((b) => (b.onclick = () => { AD = fundDraft(b.dataset.pre); acctForm(); }));
+    document.querySelectorAll('[data-lpre]').forEach((b) => (b.onclick = () => { Object.assign(AD, LIVE_PRESETS[b.dataset.lpre]); acctForm(); }));
+    document.querySelectorAll('[data-f]').forEach((el) => (el.onchange = () => {
+      const k = el.dataset.f; let v = el.type === 'checkbox' ? el.checked : el.value;
+      if (el.type !== 'checkbox' && k !== 'name' && /^-?\d+(\.\d+)?$/.test(String(v).trim())) v = +v;
+      setp(AD, k, v); if (k === 'phases') acctForm();
+    }));
+    $('#ac_cancel').onclick = closeModal;
+    $('#ac_create').onclick = () => {
+      const D2 = AD, nm = String(D2.name || '').trim() || (D2.type === 'live' ? 'Live account' : 'Funded account');
+      let a;
+      if (D2.type === 'funded') {
+        if (!(D2.size >= 100)) { toast('Account size is too small'); return; }
+        if (D2.phases > 0 && D2.ph.slice(0, D2.phases).some((p) => !(p.t > 0))) { toast('Every phase needs a profit target'); return; }
+        const cfg = JSON.parse(JSON.stringify(D2)); cfg.ph = cfg.ph.slice(0, cfg.phases); delete cfg.type; delete cfg.name; delete cfg.phases;
+        a = { id: 'a' + Date.now(), type: 'funded', name: nm, cfg, attempt: 1, payouts: [], earned: 0 };
+      } else {
+        if (!(D2.bal >= 100)) { toast('Starting balance is too small'); return; }
+        const cond = { varSpread: !!D2.varSpread, spreadLvl: D2.spreadLvl, slip: !!D2.slip, slipLvl: D2.slipLvl, comm: +D2.comm || 0, swap: !!D2.swap, margin: !!D2.margin, stopOut: +D2.stopOut || 50, requote: !!D2.requote, disc: !!D2.disc };
+        a = { id: 'a' + Date.now(), type: 'live', name: nm, cfg: {}, cond, lev: +D2.lev, size0: +D2.bal, attempt: 1, payouts: [], earned: 0 };
+      }
+      acctInit(a); P.accts = P.accts || []; P.accts.push(a); P.curAcct = a.id; saveP(); closeModal(); renderStart();
+    };
+  }
+  function bindAcctBox(a0) {
+    const box = $('#ac_box'); if (!box) return; const list = P.accts || [];
+    let h = '<label class="lbl" style="margin-top:0">Account</label><div class="chips"><span class="chip ' + (!a0 ? 'on' : '') + '" data-ac="">Practice</span>' + list.map((x) => '<span class="chip ' + (a0 && a0.id === x.id ? 'on' : '') + '" data-ac="' + x.id + '">' + esc(x.name) + '</span>').join('') + '<span class="chip add" id="ac_new">+ New account</span></div>';
+    if (a0) {
+      const m = acctM(a0, a0.bal);
+      h += '<div class="srow"><span>' + (a0.type === 'live' ? 'Live' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
+        (m.ph ? pbar(m.cp / m.target) + '<div class="muted sm">Profit ' + fmt(m.cp) + ' of ' + fmt(m.target) + ' target</div>' : '') +
+        '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt</button>' : '') + '<button class="ghost2" id="ac_del">Delete</button></div>' +
+        '<p class="muted sm">Sessions on this account continue from its balance. You can only move forward in time.</p>';
+    }
+    box.innerHTML = h;
+    box.querySelectorAll('[data-ac]').forEach((el) => (el.onclick = () => { P.curAcct = el.dataset.ac || null; saveP(); renderStart(); }));
+    $('#ac_new').onclick = () => { AD = fundDraft('two'); acctForm(); };
+    if (a0) {
+      $('#ac_rules').onclick = () => openAcctPanel(a0, true);
+      const ag = $('#ac_again'); if (ag) ag.onclick = () => { const keep = { id: a0.id, type: a0.type, name: a0.name, cfg: a0.cfg, cond: a0.cond, lev: a0.lev, size0: a0.size0, attempt: (a0.attempt || 1) + 1, payouts: a0.payouts || [], earned: a0.earned || 0 }; const i = P.accts.indexOf(a0); P.accts[i] = acctInit(keep); saveP(); renderStart(); toast('New attempt started'); };
+      $('#ac_del').onclick = () => { if (confirm('Delete this account and its progress?')) { P.accts = P.accts.filter((x) => x !== a0); P.curAcct = null; saveP(); renderStart(); } };
+    }
+  }
+
+  function discTick() {
+    const a = AC(); if (!a || !a.cond || !a.cond.disc || !timer) return;
+    if (S.lockUntil && Date.now() < S.lockUntil) return;
+    if (Math.random() < 0.012) { S.lockUntil = Date.now() + 6000; toast('Connection lost. Reconnecting...'); setTimeout(() => { if (S) toast('Reconnected'); }, 6100); }
+  }
+  const dayHist = () => { const pid = S.pending && !S.pending.check ? S.pending.id : null, H = (S.hist || []).filter((h) => h.id !== pid); return { s: H, d: H.filter((h) => Math.floor(h.t1 / 1440) === S.dayKey) }; };
+  const wrOf = (H) => (H.length ? Math.round(H.filter((h) => h.pnl > 0).length / H.length * 100) + '%' : '--');
+  const avgROf = (H) => (H.length ? H.reduce((x, h) => x + h.r, 0) / H.length : null);
+
   // ---------- replay ----------
   let HIST = [], IS = [];
-  let dTool = 'cur', dSel = null, dDraft = null, dDrag = null, dGrab = false, ovSig = '', ovRaf = 0, dVer = 0, dtbOpen = false, mkApi = null;
+  let dTool = 'cur', dSel = null, dDraft = null, dDrag = null, dGrab = false, ovSig = '', ovRaf = 0, dVer = 0, dtbOpen = false, mkApi = null, man = false, touchy = false, gs = null, docBound = false;
   const PZ = { k: 1, off: 0 };
   const IND = { ema: ['EMA', 20, '#e6c14b'], sma: ['SMA', 50, '#4f8cff'], bb: ['Bollinger Bands', 20, '#9b8cff'], vwap: ['VWAP', 0, '#ff9f43'], rsi: ['RSI', 14, '#c792ea'], vol: ['Volume', 0, '#5c6b7f'] };
   const PALETTE = ['#e6c14b', '#4f8cff', '#ff9f43', '#c792ea', '#5ad1c4', '#ff6f91'];
-  function destroyChart() { cancelAnimationFrame(ovRaf); ovRaf = 0; mkApi = null; if (chart) { try { chart.remove(); } catch (e) {} chart = null; series = null; lines = []; IS = []; } }
+  function destroyChart() { cancelAnimationFrame(ovRaf); ovRaf = 0; mkApi = null; if (chart && S) { const v = captureView(); if (v) savedView = v; } if (chart) { try { chart.remove(); } catch (e) {} chart = null; series = null; lines = []; IS = []; } }
 
   // ---- timeframe menu (collapsible, with pinned favourites) ----
   function tfLabel(v) { const t = TFS.find((x) => x[0] === v); return t ? t[1] : v + 'm'; }
@@ -327,19 +655,21 @@
       f = f.includes(v) ? f.filter((x) => x !== v) : f.concat(v); P.set.favs = f; saveP(); drawTfBits();
     }));
   }
-  function setTF(v) { if (!S || v === S.tf) return; S.tf = v; loadTF(); drawTfBits(); saveP(); }
+  function setTF(v) { if (!S || v === S.tf) return; const view = captureView(); S.tf = v; loadTF(view); drawTfBits(); saveP(); }
 
   function renderReplay() {
+    applyEnv(); setTimeout(flushAlerts, 250);
     dTool = 'cur'; dSel = null; dDraft = null; dDrag = null; dGrab = false; ovSig = '';
     $('#view').innerHTML = '<div class="rp">' +
       '<div class="top">' +
-      '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span></div>' +
-      '<div class="stats4"><span class="kv"><i>Balance</i><b id="h_bal"></b></span><span class="kv"><i>Equity</i><b id="h_eq"></b></span><span class="kv"><i>Session P&amp;L</i><b id="h_pnl"></b></span><span class="kv"><i>Trades today</i><b id="h_cnt"></b></span></div></div>' +
+      '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span><span id="h_acct" class="stag acc" style="display:none"></span><span class="trc">Trades <b id="h_cnt"></b></span></div>' +
+      '<div class="stats4"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Equity <u id="h_eq"></u></em></span><span class="kv"><i>Session P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span><span class="kv"><i>Session WR</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Session avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
-      '<button class="tf ind" id="c_hist" title="Trade history">&#9776;</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
-      '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><button id="c_auto" class="autob on" title="Auto-fit price">A</button>' +
-      '<div class="island"><div class="fxbar"><button id="c_play" class="pl">&#9654;</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_end" class="endb">End</button></div></div></div></div>';
-    mountChart(); loadTF(); drawTfBits(); drawTb(); bindDraw();
+      '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
+      '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><div id="favis" class="favis"></div><div id="toolpanel" class="toolpanel"></div><div id="ctxm" class="ctxm"></div>' +
+      '<div class="island"><div class="grip" data-grip="isl" title="Drag to move (double-click to reset)">' + UI.grip + '</div><div class="fxbar"><button id="c_play" class="pl">' + UI.play + '</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_end" class="endb">End</button></div></div></div></div>';
+    if (!S.vid) S.vid = Date.now();
+    mountChart(); loadTF(savedView && savedView.key === S.vid ? savedView : null); drawTfBits(); drawTb(); drawFav(); bindDraw(); placeMovable('isl'); bindGrip($('.island .grip'), $('.island'), 'isl');
     $('#tf_menu').onclick = (e) => { e.stopPropagation(); $('#tf_panel').classList.toggle('on'); };
     $('#c_next').onclick = () => { pause(); nextCandle(); };
     $('#c_sess').onclick = () => { pause(); nextSession(); };
@@ -353,6 +683,7 @@
     $('#view').addEventListener('pointerdown', (e) => { if (!e.target.closest('.tfmw')) { const p = $('#tf_panel'); if (p) p.classList.remove('on'); } });
     $('#c_ind').onclick = () => { pause(); openInd(); };
     $('#c_hist').onclick = () => { pause(); openHistory(); };
+    $('#c_note').onclick = noteModal;
     $('#c_end').onclick = endSession;
     drawTradebar(); refreshHud(); drawLines();
     cancelAnimationFrame(ovRaf); ovRaf = requestAnimationFrame(ovLoop);
@@ -369,7 +700,7 @@
       timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: '#2a2e39', barSpacing: 9, minBarSpacing: 3 },
       rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.14 } }, crosshair: { mode: 0 },
     });
-    PZ.k = 1; PZ.off = 0; manual = false;
+    PZ.k = 1; PZ.off = 0; man = false;
     series = chart.addSeries(LW.CandlestickSeries, {
       upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineVisible: true,
       priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
@@ -382,19 +713,128 @@
     });
     mkApi = LW.createSeriesMarkers ? LW.createSeriesMarkers(series, []) : null;
   }
-  function loadTF() {
+  function loadTF(v) {
     HIST = E.candles(S.tf, S.cur, 700);
     series.setData(HIST); S.run = HIST[HIST.length - 1] || null;
-    PZ.k = 1; PZ.off = 0;
     buildInd(); refreshMarkers(); dVer++;
+    if (v) { applyView(v); return; }
+    PZ.k = 1; PZ.off = 0; man = false; try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {}
     chart.timeScale().applyOptions({ barSpacing: 9 });
     chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, HIST.length - 60), to: HIST.length + 6 });
   }
 
   // ---------- drawing tools (overlay canvas on top of the chart) ----------
-  const DTOOLS = [['cur', '&#8598;', 'Cursor'], ['trend', '&#9585;', 'Trend line'], ['ray', '&#8599;', 'Ray'], ['hline', '&#8212;', 'Horizontal line'], ['vline', '&#124;', 'Vertical line'], ['rect', '&#9645;', 'Rectangle'], ['fib', 'Fib', 'Fib retracement'], ['text', 'T', 'Text']];
-  const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
   const DCOL = '#e6c14b';
+  const DSW = ['#e6c14b', '#4f8cff', '#ef5350', '#26a69a', '#c792ea', '#ffffff'];
+  const svg = (inner) => '<svg viewBox="0 0 24 24" aria-hidden="true">' + inner + '</svg>';
+  const Pa = (d, x) => '<path d="' + d + '"' + (x ? ' ' + x : '') + '/>';
+  const Dt = (x, y) => '<circle cx="' + x + '" cy="' + y + '" r="1.8" fill="currentColor" stroke="none"/>';
+  const DASH = 'stroke-dasharray="2 2"';
+  const TOOLS = [
+    // [id, name, category, points (0 = any number, -1 = freehand), icon]
+    ['trend', 'Trend line', 'Lines', 2, Pa('M5 19L19 5') + Dt(5, 19) + Dt(19, 5)],
+    ['ray', 'Ray', 'Lines', 2, Pa('M5 19L21 3') + Dt(5, 19)],
+    ['info', 'Info line', 'Lines', 2, Pa('M4 19L14 9') + Dt(4, 19) + '<rect x="13" y="3" width="9" height="6" rx="1.5"/>'],
+    ['extended', 'Extended line', 'Lines', 2, Pa('M2 22L22 2') + Dt(8, 16) + Dt(15, 9)],
+    ['angle', 'Trend angle', 'Lines', 2, Pa('M4 19L19 7M4 19H21') + Pa('M12 19a8 8 0 0 0-3-6')],
+    ['hline', 'Horizontal line', 'Lines', 1, Pa('M3 12H21') + Dt(12, 12)],
+    ['hray', 'Horizontal ray', 'Lines', 1, Pa('M6 12H21') + Dt(6, 12)],
+    ['vline', 'Vertical line', 'Lines', 1, Pa('M12 3V21') + Dt(12, 12)],
+    ['cross', 'Cross line', 'Lines', 1, Pa('M3 12H21M12 3V21')],
+    ['channel', 'Parallel channel', 'Channels', 3, Pa('M4 14L16 5M8 20L20 11')],
+    ['regression', 'Regression trend', 'Channels', 2, Pa('M4 16L20 8') + Pa('M4 11L20 3M4 21L20 13', DASH)],
+    ['flat', 'Flat top / bottom', 'Channels', 3, Pa('M4 19L20 9M4 5H20')],
+    ['disjoint', 'Disjoint channel', 'Channels', 4, Pa('M3 10L11 4M13 20L21 14') + Pa('M3 10L13 20M11 4L21 14', 'opacity=".4"')],
+    ['pitchfork', 'Pitchfork', 'Pitchforks', 3, Pa('M4 20L20 4') + Pa('M4 8L16 20M10 4L20 14', 'opacity=".6"')],
+    ['schiff', 'Schiff pitchfork', 'Pitchforks', 3, Pa('M5 18L20 6') + Pa('M4 7L14 19M10 4L20 13', 'opacity=".6"') + Dt(5, 18)],
+    ['mschiff', 'Modified Schiff pitchfork', 'Pitchforks', 3, Pa('M7 16L20 6') + Pa('M4 7L14 19M10 4L20 13', 'opacity=".6"') + Dt(7, 16)],
+    ['inside', 'Inside pitchfork', 'Pitchforks', 3, Pa('M4 20L20 4') + Pa('M4 8L16 20M10 4L20 14M7 14L14 8', 'opacity=".5"')],
+    ['pitchfan', 'Pitchfan', 'Pitchforks', 3, Pa('M4 12L20 4M4 12L20 12M4 12L20 20')],
+    ['fib', 'Fib retracement', 'Fibonacci', 2, Pa('M4 5H20M4 10H20M4 15H20M4 20H20') + Pa('M6 19L18 6', DASH)],
+    ['fibext', 'Trend-based fib extension', 'Fibonacci', 3, Pa('M4 6H20M4 12H20M4 18H20') + Pa('M4 20L9 10L14 15')],
+    ['fibchan', 'Fib channel', 'Fibonacci', 3, Pa('M3 20L20 12M3 15L20 7M3 10L20 2')],
+    ['fibtz', 'Fib time zone', 'Fibonacci', 2, Pa('M5 4V20M9 4V20M13 4V20M19 4V20')],
+    ['fibfan', 'Fib speed resistance fan', 'Fibonacci', 2, Pa('M4 20L20 5M4 20L20 11M4 20L20 16M4 20L20 20')],
+    ['fibtime', 'Trend-based fib time', 'Fibonacci', 3, Pa('M4 20H20') + Pa('M8 5V20M12 9V20M18 5V20')],
+    ['fibcirc', 'Fib circles', 'Fibonacci', 2, '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/>'],
+    ['fibspiral', 'Fib spiral', 'Fibonacci', 2, Pa('M12 12a2 2 0 0 1 2 2a4 4 0 0 1-4 4a7 7 0 0 1-7-7a11 11 0 0 1 11-9')],
+    ['fibarc', 'Fib speed resistance arcs', 'Fibonacci', 2, Pa('M4 20A16 16 0 0 1 20 4') + Pa('M4 20A10 10 0 0 1 14 10')],
+    ['fibwedge', 'Fib wedge', 'Fibonacci', 3, Pa('M4 20L20 6M4 20L20 16') + Pa('M14 8Q18 12 17 17')],
+    ['gannbox', 'Gann box', 'Gann', 2, '<rect x="4" y="4" width="16" height="16"/>' + Pa('M4 4L20 20M4 20L20 4M12 4V20M4 12H20')],
+    ['gannsq', 'Gann square', 'Gann', 2, '<rect x="4" y="4" width="16" height="16"/>' + Pa('M4 4L20 20M4 12H20M12 4V20M8 4V20M16 4V20')],
+    ['gannsqf', 'Gann square fixed', 'Gann', 2, '<rect x="4" y="4" width="16" height="16"/>' + Pa('M4 20L20 4M4 12H20M12 4V20')],
+    ['gannfan', 'Gann fan', 'Gann', 2, Pa('M4 20L20 4M4 20L20 10M4 20L20 15M4 20L12 4M4 20L8 4')],
+    ['xabcd', 'XABCD pattern', 'Patterns', 5, Pa('M3 16L7 5L13 14L16 8L21 16')],
+    ['cypher', 'Cypher pattern', 'Patterns', 5, Pa('M3 17L8 6L12 15L17 4L21 12')],
+    ['abcd', 'ABCD pattern', 'Patterns', 4, Pa('M4 17L9 6L15 16L20 5')],
+    ['hs', 'Head and shoulders', 'Patterns', 7, Pa('M2 18L6 12L9 15L12 5L15 15L18 12L22 18') + Pa('M2 15H22', 'opacity=".5"')],
+    ['trianglep', 'Triangle pattern', 'Patterns', 4, Pa('M3 5L21 11M3 19L21 13')],
+    ['threedrives', 'Three drives pattern', 'Patterns', 7, Pa('M2 18L5 10L7 14L11 6L13 11L18 3L21 8')],
+    ['impulse', 'Elliott impulse wave (12345)', 'Elliott waves', 6, Pa('M2 19L6 9L9 14L14 4L16 9L21 2')],
+    ['correction', 'Elliott correction wave (ABC)', 'Elliott waves', 4, Pa('M3 5L10 15L14 10L21 20')],
+    ['trianglewave', 'Elliott triangle wave (ABCDE)', 'Elliott waves', 6, Pa('M2 6L7 18L11 8L14 16L17 10L21 14')],
+    ['doublecombo', 'Elliott double combo (WXY)', 'Elliott waves', 4, Pa('M3 18L8 7L12 14L16 8L21 14')],
+    ['triplecombo', 'Elliott triple combo (WXYXZ)', 'Elliott waves', 6, Pa('M2 18L5 8L8 14L11 6L14 14L17 7L21 15')],
+    ['cyclic', 'Cyclic lines', 'Cycles', 2, Pa('M5 4V20M10 4V20M15 4V20M20 4V20')],
+    ['timecycles', 'Time cycles', 'Cycles', 2, Pa('M3 18A4 6 0 0 1 11 18M11 18A4 6 0 0 1 19 18')],
+    ['sine', 'Sine line', 'Cycles', 2, Pa('M2 12Q7 0 12 12T22 12')],
+    ['longpos', 'Long position', 'Projection', 1, '<rect x="5" y="4" width="14" height="8" rx="1" fill="currentColor" fill-opacity=".25"/><rect x="5" y="12" width="14" height="8" rx="1"/>'],
+    ['shortpos', 'Short position', 'Projection', 1, '<rect x="5" y="4" width="14" height="8" rx="1"/><rect x="5" y="12" width="14" height="8" rx="1" fill="currentColor" fill-opacity=".25"/>'],
+    ['forecast', 'Forecast', 'Projection', 2, Pa('M3 18L11 12') + Pa('M11 12L21 5', DASH) + '<rect x="16" y="3" width="6" height="6" rx="1"/>'],
+    ['barspattern', 'Bars pattern', 'Projection', 3, Pa('M5 8V16M5 10H7M5 14H3M10 5V14M10 7H12M10 12H8M15 11V19M15 13H17M15 17H13')],
+    ['projection', 'Projection', 'Projection', 3, Pa('M3 18L10 8') + Pa('M12 20L20 10', DASH)],
+    ['avwap', 'Anchored VWAP', 'Projection', 1, Pa('M4 18Q9 8 12 14T21 6') + Dt(4, 18)],
+    ['volprofile', 'Fixed range volume profile', 'Projection', 2, Pa('M4 4V20') + Pa('M4 6H12M4 9H17M4 12H10M4 15H14M4 18H8')],
+    ['avolprofile', 'Anchored volume profile', 'Projection', 1, Pa('M4 4V20') + Pa('M4 6H12M4 9H17M4 12H10M4 15H14M4 18H8') + Dt(4, 4)],
+    ['pricerange', 'Price range', 'Measure', 2, Pa('M12 4V20M8 8L12 4L16 8M8 16L12 20L16 16')],
+    ['daterange', 'Date range', 'Measure', 2, Pa('M4 12H20M8 8L4 12L8 16M16 8L20 12L16 16')],
+    ['datepricerange', 'Date and price range', 'Measure', 2, '<rect x="4" y="6" width="16" height="12" rx="1"/>' + Pa('M12 8V16M8 12H16')],
+    ['brush', 'Brush', 'Brushes and arrows', -1, Pa('M4 20L8 20L19 9L15 5L4 16Z') + Pa('M13 7L17 11')],
+    ['highlighter', 'Highlighter', 'Brushes and arrows', -1, Pa('M5 19H12L20 11L15 6L7 14Z') + Pa('M4 21H20', 'opacity=".5"')],
+    ['arrow', 'Arrow', 'Brushes and arrows', 2, Pa('M4 20L19 5M11 5H19V13')],
+    ['arrowmark', 'Arrow marker', 'Brushes and arrows', 2, Pa('M5 19L17 7', 'stroke-width="3"') + Pa('M10 5H19V14')],
+    ['arrowup', 'Arrow mark up', 'Brushes and arrows', 1, Pa('M12 20V6M6 12L12 5L18 12')],
+    ['arrowdown', 'Arrow mark down', 'Brushes and arrows', 1, Pa('M12 4V18M6 12L12 19L18 12')],
+    ['rect', 'Rectangle', 'Shapes', 2, '<rect x="4" y="6" width="16" height="12" rx="1"/>'],
+    ['rotrect', 'Rotated rectangle', 'Shapes', 3, Pa('M3 14L13 4L21 12L11 22Z')],
+    ['circle', 'Circle', 'Shapes', 2, '<circle cx="12" cy="12" r="8"/>'],
+    ['ellipse', 'Ellipse', 'Shapes', 2, '<ellipse cx="12" cy="12" rx="9" ry="6"/>'],
+    ['polyline', 'Polyline', 'Shapes', 0, Pa('M3 18L9 8L14 14L21 5')],
+    ['path', 'Path', 'Shapes', 0, Pa('M3 18L9 8L14 14L20 6M15 6H20V11')],
+    ['triangle', 'Triangle', 'Shapes', 3, Pa('M12 4L21 19H3Z')],
+    ['arc', 'Arc', 'Shapes', 3, Pa('M4 18Q12 0 20 18')],
+    ['curve', 'Curve', 'Shapes', 2, Pa('M4 18Q12 2 20 8')],
+    ['doublecurve', 'Double curve', 'Shapes', 2, Pa('M3 18C10 18 14 6 21 6')],
+    ['text', 'Text', 'Text and notes', 1, Pa('M5 6H19M12 6V19M9 19H15')],
+    ['note', 'Note', 'Text and notes', 1, Pa('M5 4H19V16H11L7 20V16H5Z')],
+    ['callout', 'Callout', 'Text and notes', 2, Pa('M5 4H19V14H13L9 20V14H5Z')],
+    ['comment', 'Comment', 'Text and notes', 1, Pa('M5 5H19V15H12L8 19V15H5Z') + Dt(9, 10) + Dt(12, 10) + Dt(15, 10)],
+    ['pricelabel', 'Price label', 'Text and notes', 1, Pa('M3 12L8 6H21V18H8Z')],
+    ['pricenote', 'Price note', 'Text and notes', 2, Pa('M3 18L11 10') + '<rect x="11" y="4" width="10" height="6" rx="1"/>'],
+    ['pin', 'Pin', 'Text and notes', 1, Pa('M12 21V12') + '<circle cx="12" cy="8" r="4.5"/>'],
+    ['signpost', 'Signpost', 'Text and notes', 1, Pa('M6 21V4') + Pa('M6 5H19L16 9L19 13H6')],
+    ['flagnote', 'Flag note', 'Text and notes', 1, Pa('M6 21V4') + Pa('M6 4H19V12H6')],
+  ];
+  const TOOL = {}; TOOLS.forEach((t) => (TOOL[t[0]] = { id: t[0], name: t[1], cat: t[2], n: t[3], icon: svg(t[4]) }));
+  const UI = {
+    pencil: svg(Pa('M4 20L5 15L16 4L20 8L9 19Z') + Pa('M14 6L18 10')),
+    cursor: svg(Pa('M6 3L18 12L12 13L9 19Z')),
+    magnet: svg(Pa('M6 4V12a6 6 0 0 0 12 0V4M6 8H10M14 8H18')),
+    trash: svg(Pa('M5 7H19M10 7V4H14V7M7 7L8 20H16L17 7')),
+    star: svg(Pa('M12 3.5L14.6 9L20.5 9.7L16 13.8L17.3 19.8L12 16.8L6.7 19.8L8 13.8L3.5 9.7L9.4 9Z')),
+    starOn: svg(Pa('M12 3.5L14.6 9L20.5 9.7L16 13.8L17.3 19.8L12 16.8L6.7 19.8L8 13.8L3.5 9.7L9.4 9Z', 'fill="currentColor"')),
+    note: svg(Pa('M5 3H15L19 7V21H5Z') + Pa('M9 12H15M9 16H13')),
+    list: svg(Pa('M8 6H20M8 12H20M8 18H20') + Dt(4, 6) + Dt(4, 12) + Dt(4, 18)),
+    grip: svg(Dt(9, 6) + Dt(15, 6) + Dt(9, 12) + Dt(15, 12) + Dt(9, 18) + Dt(15, 18)),
+    play: svg(Pa('M7 4L19 12L7 20Z', 'fill="currentColor"')),
+    pause: svg(Pa('M8 5V19M16 5V19', 'stroke-width="3"')),
+    reset: svg(Pa('M4 12a8 8 0 1 0 3-6.2M4 4V8H8')),
+  };
+  const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618];
+  const FCOL = ['#787b86', '#f23645', '#ff9800', '#4caf50', '#089981', '#00bcd4', '#787b86', '#2962ff', '#9c27b0'];
+  const TEXTY = { text: 1, note: 1, callout: 1, comment: 1, pricenote: 1, pin: 1, signpost: 1, flagnote: 1 };
+
+  // ---- coordinate helpers ----
   function t2l(t) {
     const n = HIST.length; if (!n) return 0; const step = S.tf * 60;
     if (t >= HIST[n - 1].time) return n - 1 + (t - HIST[n - 1].time) / step;
@@ -409,11 +849,21 @@
     if (l <= 0) return HIST[0].time + l * step;
     const lo = Math.floor(l); return HIST[lo].time + (l - lo) * (HIST[lo + 1].time - HIST[lo].time);
   }
-  const proj = (pt) => { const x = chart.timeScale().logicalToCoordinate(t2l(pt.t)), y = series.priceToCoordinate(pt.p); return (x == null || y == null) ? null : { x, y }; };
-  function unproj(x, y) {
+  const xl = (l) => chart.timeScale().logicalToCoordinate(l);
+  const yp = (p) => series.priceToCoordinate(p);
+  const proj = (pt) => { const x = xl(t2l(pt.t)), y = yp(pt.p); return (x == null || y == null) ? null : { x, y }; };
+  function unproj(x, y, snap) {
     const l = chart.timeScale().coordinateToLogical(x), p = series.coordinateToPrice(y);
     if (l == null || p == null) return null;
-    return { t: l2t(l), p: Math.round(p * 100) / 100, l };
+    let o = { t: l2t(l), p: Math.round(p * 100) / 100, l };
+    const mg = (P.set && P.set.magnet) || 0;
+    if (snap && mg && HIST.length) {
+      const i = Math.max(0, Math.min(HIST.length - 1, Math.round(l))), b = HIST[i];
+      let best = null;
+      [b.open, b.high, b.low, b.close].forEach((pr) => { const py = yp(pr); if (py == null) return; const dd = Math.abs(py - y); if (!best || dd < best.d) best = { d: dd, p: pr }; });
+      if (best && (mg === 2 || best.d <= 22)) o = { t: b.time, p: best.p, l: i };
+    }
+    return o;
   }
   function distSeg(px, py, a, b) {
     const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
@@ -426,62 +876,435 @@
     try { ph = h - chart.timeScale().height(); } catch (e) {}
     return { w, h, pw, ph };
   }
+  const sgn = (v) => (v >= 0 ? '+' : '');
+  const f2 = (v) => v.toFixed(2);
+  const pctOf = (a, b) => (a ? (b - a) / a * 100 : 0);
+  function fdur(sec) {
+    sec = Math.abs(sec); const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    return ((d ? d + 'd ' : '') + (h ? h + 'h ' : '') + (m || !(d || h) ? m + 'm' : '')).trim();
+  }
+
+  // ---- paint helpers ----
+  function rrect(c, x, y, w, h, r) { c.beginPath(); if (c.roundRect) c.roundRect(x, y, w, h, r); else c.rect(x, y, w, h); }
+  function tag(c, txt, x, y, bg, fg, al) {
+    c.font = '600 11px sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
+    const w = c.measureText(txt).width + 10, h = 18, x0 = al === 'r' ? x - w : al === 'c' ? x - w / 2 : x;
+    c.fillStyle = bg; rrect(c, x0, y - h / 2, w, h, 4); c.fill();
+    c.fillStyle = fg || '#fff'; c.fillText(txt, x0 + 5, y);
+  }
+  function arrowHead(c, a, b, s) {
+    const an = Math.atan2(b.y - a.y, b.x - a.x); s = s || 10;
+    c.beginPath(); c.moveTo(b.x, b.y); c.lineTo(b.x - s * Math.cos(an - 0.45), b.y - s * Math.sin(an - 0.45)); c.lineTo(b.x - s * Math.cos(an + 0.45), b.y - s * Math.sin(an + 0.45)); c.closePath(); c.fill();
+  }
+  function mkEnv(c, pw, ph, d) {
+    const col = d.color || DCOL, e = { c, pw, ph, col, post: [], xl, yp };
+    e.L = (a, b) => { c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); };
+    e.far = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y, k = 1e5 / (Math.hypot(dx, dy) || 1); return { x: a.x + dx * k, y: a.y + dy * k }; };
+    e.ray = (a, b) => e.L(a, e.far(a, b));
+    e.path = (Q, close) => { c.beginPath(); Q.forEach((q, i) => (i ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y))); if (close) c.closePath(); };
+    e.fillPoly = (Q, a) => { e.path(Q, true); c.globalAlpha = a || 0.12; c.fill(); c.globalAlpha = 1; };
+    e.poly = (Q, close) => { e.path(Q, close); c.stroke(); };
+    e.tag = (txt, x, y, bg, fg, al) => tag(c, txt, x, y, bg || col, fg, al);
+    e.dash = (a) => c.setLineDash(a || []);
+    e.mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    return e;
+  }
+
+  // ---- long / short position stats (TradingView style) ----
+  function posStats(d) {
+    const key = [d.pts[0].t, d.pts[0].p, d.pts[1].p, d.pts[2].p, S.cur, S.balance].join('|');
+    if (d._c && d._c.key === key) return d._c.v;
+    const long = d.type === 'longpos', en = d.pts[0].p, tp = d.pts[1].p, sl = d.pts[2].p;
+    const dist = Math.abs(en - sl), units = dist > 0.005 ? E.size(S.balance, P.plan.risk.pct, en, sl).units || 0 : 0;
+    const risk = units * dist, reward = units * Math.abs(tp - en), rr = dist > 0 ? Math.abs(tp - en) / dist : 0;
+    let status = 'pending', res = null;
+    const i0 = E.find(Math.floor(d.pts[0].t / 60));
+    if (i0 >= 0 && d.pts[0].t <= E.t(S.cur) * 60) {
+      status = 'open';
+      for (let i = i0 + 1; i <= S.cur; i++) {
+        const b = E.bar(i);
+        if (long ? b.l <= sl : b.h >= sl) { status = 'stop'; break; }
+        if (long ? b.h >= tp : b.l <= tp) { status = 'target'; break; }
+      }
+      if (status === 'open') res = units * (E.close(S.cur) - en) * (long ? 1 : -1);
+    }
+    const v = { long, en, tp, sl, units, risk, reward, rr, status, open: res };
+    d._c = { key, v }; return v;
+  }
+
+  // ---- shape renderers: (ctx, projected points, drawing, env) ----
+  const RD = {};
+  RD.trend = (c, Q, d, e) => e.L(Q[0], Q[1]);
+  RD.ray = (c, Q, d, e) => e.ray(Q[0], Q[1]);
+  RD.extended = (c, Q, d, e) => { e.ray(Q[0], Q[1]); e.ray(Q[1], Q[0]); };
+  RD.info = (c, Q, d, e) => {
+    e.L(Q[0], Q[1]); const a = d.pts[0], b = d.pts[1], dp = b.p - a.p, bars = Math.round(t2l(b.t) - t2l(a.t)), ang = Math.round(Math.atan2(-(Q[1].y - Q[0].y), Q[1].x - Q[0].x) * 180 / Math.PI);
+    e.tag(sgn(dp) + f2(dp) + ' (' + sgn(dp) + f2(pctOf(a.p, b.p)) + '%)  ' + bars + ' bars  ' + fdur(b.t - a.t) + '  ' + ang + '\u00b0', Q[1].x + 8, Q[1].y - 14, '#363c4e');
+  };
+  RD.angle = (c, Q, d, e) => {
+    e.L(Q[0], Q[1]); e.dash([4, 4]); e.L(Q[0], { x: Q[1].x, y: Q[0].y }); e.dash();
+    const an = Math.atan2(Q[1].y - Q[0].y, Q[1].x - Q[0].x), deg = Math.round(-an * 180 / Math.PI);
+    c.beginPath(); c.arc(Q[0].x, Q[0].y, 26, 0, an, an < 0); c.stroke();
+    e.tag(deg + '\u00b0', Q[0].x + 34, Q[0].y + (an < 0 ? -10 : 10), '#363c4e');
+  };
+  RD.hline = (c, Q, d, e) => {
+    e.L({ x: 0, y: Q[0].y }, { x: e.pw, y: Q[0].y });
+    e.post.push(() => tag(c, d.pts[0].p.toFixed(2), e.pw + 1, Q[0].y, d.color || DCOL, '#10141a', 'l'));
+  };
+  RD.hray = (c, Q, d, e) => { e.L({ x: Q[0].x, y: Q[0].y }, { x: e.pw, y: Q[0].y }); };
+  RD.vline = (c, Q, d, e) => e.L({ x: Q[0].x, y: 0 }, { x: Q[0].x, y: e.ph });
+  RD.cross = (c, Q, d, e) => { e.L({ x: 0, y: Q[0].y }, { x: e.pw, y: Q[0].y }); e.L({ x: Q[0].x, y: 0 }, { x: Q[0].x, y: e.ph }); };
+  RD.channel = (c, Q, d, e) => {
+    const k = (Q[1].y - Q[0].y) / ((Q[1].x - Q[0].x) || 1), off = Q[2].y - (Q[0].y + (Q[2].x - Q[0].x) * k);
+    const A = { x: Q[0].x, y: Q[0].y + off }, B = { x: Q[1].x, y: Q[1].y + off };
+    e.fillPoly([Q[0], Q[1], B, A], 0.08); e.L(Q[0], Q[1]); e.L(A, B); e.dash([4, 4]); e.L(e.mid(Q[0], A), e.mid(Q[1], B)); e.dash();
+  };
+  RD.regression = (c, Q, d, e) => {
+    let i0 = Math.round(Math.min(t2l(d.pts[0].t), t2l(d.pts[1].t))), i1 = Math.round(Math.max(t2l(d.pts[0].t), t2l(d.pts[1].t)));
+    i0 = Math.max(0, i0); i1 = Math.min(HIST.length - 1, i1); if (i1 - i0 < 2) { e.L(Q[0], Q[1]); return; }
+    const n = i1 - i0 + 1; let sx = 0, sy = 0, sxy = 0, sxx = 0;
+    for (let i = i0; i <= i1; i++) { const x = i - i0, y = HIST[i].close; sx += x; sy += y; sxy += x * y; sxx += x * x; }
+    const m = (n * sxy - sx * sy) / (n * sxx - sx * sx || 1), b0 = (sy - m * sx) / n; let ss = 0;
+    for (let i = i0; i <= i1; i++) { const r = HIST[i].close - (b0 + m * (i - i0)); ss += r * r; }
+    const sd = Math.sqrt(ss / n), X0 = xl(i0), X1 = xl(i1), pr = (i, k) => yp(b0 + m * (i - i0) + k * sd);
+    const lines = [[0, d.color || DCOL, []], [2, '#4f8cff', []], [-2, '#4f8cff', []], [1, '#4f8cff', [3, 4]], [-1, '#4f8cff', [3, 4]]];
+    e.fillPoly([{ x: X0, y: pr(i0, 2) }, { x: X1, y: pr(i1, 2) }, { x: X1, y: pr(i1, -2) }, { x: X0, y: pr(i0, -2) }], 0.07);
+    lines.forEach((ln) => { c.strokeStyle = ln[1]; e.dash(ln[2]); e.L({ x: X0, y: pr(i0, ln[0]) }, { x: X1, y: pr(i1, ln[0]) }); }); e.dash();
+  };
+  RD.flat = (c, Q, d, e) => { e.L(Q[0], Q[1]); e.L({ x: Q[0].x, y: Q[2].y }, { x: Q[1].x, y: Q[2].y }); e.fillPoly([Q[0], Q[1], { x: Q[1].x, y: Q[2].y }, { x: Q[0].x, y: Q[2].y }], 0.08); };
+  RD.disjoint = (c, Q, d, e) => { e.L(Q[0], Q[1]); e.L(Q[2], Q[3]); e.fillPoly([Q[0], Q[1], Q[3], Q[2]], 0.08); };
+  function pf(kind) {
+    return (c, Q, d, e) => {
+      let O = Q[0];
+      if (kind === 'schiff') O = { x: Q[0].x, y: (Q[0].y + Q[1].y) / 2 };
+      if (kind === 'mschiff') O = e.mid(Q[0], Q[1]);
+      const M = e.mid(Q[1], Q[2]), v = { x: M.x - O.x, y: M.y - O.y }, k = 1e5 / (Math.hypot(v.x, v.y) || 1);
+      const fr = (p) => ({ x: p.x + v.x * k, y: p.y + v.y * k });
+      e.fillPoly([Q[1], fr(Q[1]), fr(Q[2]), Q[2]], 0.06);
+      e.L(O, fr(O)); e.L(Q[1], fr(Q[1])); e.L(Q[2], fr(Q[2]));
+      if (kind === 'inside') { const a = e.mid(Q[1], M), b = e.mid(Q[2], M); c.globalAlpha = 0.6; e.L(a, fr(a)); e.L(b, fr(b)); c.globalAlpha = 1; }
+      e.dash([4, 4]); e.L(Q[1], Q[2]); if (kind !== 'pitchfork' && kind !== 'inside') e.L(Q[0], O); e.dash();
+    };
+  }
+  RD.pitchfork = pf('pitchfork'); RD.schiff = pf('schiff'); RD.mschiff = pf('mschiff'); RD.inside = pf('inside');
+  RD.pitchfan = (c, Q, d, e) => { [0, 0.382, 0.5, 0.618, 1].forEach((f) => e.ray(Q[0], { x: Q[1].x + (Q[2].x - Q[1].x) * f, y: Q[1].y + (Q[2].y - Q[1].y) * f })); e.dash([4, 4]); e.L(Q[1], Q[2]); e.dash(); };
+  function fibLines(e, levels, priceOf, x0, x1, label) {
+    const c = e.c; let py = null, pc = null;
+    levels.forEach((L, i) => {
+      const y = yp(priceOf(L)); if (y == null) return; const col = FCOL[i % FCOL.length];
+      if (py != null) { c.globalAlpha = 0.07; c.fillStyle = pc; c.fillRect(x0, Math.min(y, py), x1 - x0, Math.abs(y - py)); c.globalAlpha = 1; }
+      c.strokeStyle = col; e.L({ x: x0, y }, { x: x1, y });
+      c.fillStyle = col; c.font = '11px sans-serif'; c.textBaseline = 'bottom'; c.textAlign = 'left'; c.fillText(label(L, priceOf(L)), x0 + 4, y - 2);
+      py = y; pc = col;
+    });
+  }
+  RD.fib = (c, Q, d, e) => {
+    const x0 = Math.min(Q[0].x, Q[1].x), x1 = Math.max(Q[0].x, Q[1].x) + (Math.abs(Q[1].x - Q[0].x) < 40 ? 60 : 0), a = d.pts[0].p, b = d.pts[1].p;
+    fibLines(e, FIBS, (L) => b + (a - b) * L, x0, x1, (L, p) => L + ' (' + p.toFixed(2) + ')');
+    c.strokeStyle = '#787b86'; e.dash([4, 4]); c.globalAlpha = 0.6; e.L(Q[0], Q[1]); c.globalAlpha = 1; e.dash();
+  };
+  RD.fibext = (c, Q, d, e) => {
+    const lv = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618, 2, 2.618], mv = d.pts[1].p - d.pts[0].p, base = d.pts[2].p;
+    fibLines(e, lv, (L) => base + mv * L, Math.min(Q[1].x, Q[2].x), Math.max(Q[2].x + 120, Q[1].x + 120), (L, p) => L + ' (' + p.toFixed(2) + ')');
+    c.strokeStyle = '#787b86'; e.dash([4, 4]); e.poly(Q.slice(0, 3)); e.dash();
+  };
+  RD.fibchan = (c, Q, d, e) => {
+    const k = (Q[1].y - Q[0].y) / ((Q[1].x - Q[0].x) || 1), off = Q[2].y - (Q[0].y + (Q[2].x - Q[0].x) * k);
+    [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618].forEach((L, i) => { c.strokeStyle = FCOL[i % FCOL.length]; e.L({ x: Q[0].x, y: Q[0].y + off * L }, { x: Q[1].x, y: Q[1].y + off * L }); });
+  };
+  const FSEQ = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+  RD.fibtz = (c, Q, d, e) => {
+    const l0 = t2l(d.pts[0].t), dl = t2l(d.pts[1].t) - l0 || 1;
+    FSEQ.forEach((f, i) => { const x = xl(l0 + dl * f); if (x == null) return; c.strokeStyle = FCOL[i % FCOL.length]; e.L({ x, y: 0 }, { x, y: e.ph }); c.fillStyle = c.strokeStyle; c.font = '11px sans-serif'; c.textBaseline = 'top'; c.fillText(String(f), x + 3, 4); });
+  };
+  RD.fibtime = (c, Q, d, e) => {
+    const l2 = t2l(d.pts[2].t), u = (t2l(d.pts[1].t) - t2l(d.pts[0].t)) || 1;
+    [0, 0.382, 0.5, 0.618, 1, 1.382, 1.618, 2, 2.618].forEach((f, i) => { const x = xl(l2 + u * f); if (x == null) return; c.strokeStyle = FCOL[i % FCOL.length]; e.L({ x, y: 0 }, { x, y: e.ph }); c.fillStyle = c.strokeStyle; c.font = '11px sans-serif'; c.textBaseline = 'top'; c.fillText(String(f), x + 3, 4); });
+    c.strokeStyle = '#787b86'; e.dash([4, 4]); e.poly(Q.slice(0, 3)); e.dash();
+  };
+  RD.fibfan = (c, Q, d, e) => {
+    [0.25, 0.382, 0.5, 0.618, 0.75, 1].forEach((L, i) => {
+      c.strokeStyle = FCOL[(i + 1) % FCOL.length];
+      e.ray(Q[0], { x: Q[1].x, y: Q[0].y + (Q[1].y - Q[0].y) * L }); e.ray(Q[0], { x: Q[0].x + (Q[1].x - Q[0].x) * L, y: Q[1].y });
+    });
+  };
+  RD.fibcirc = (c, Q, d, e) => {
+    const m = e.mid(Q[0], Q[1]), R = Math.hypot(Q[1].x - Q[0].x, Q[1].y - Q[0].y) / 2;
+    [0.236, 0.382, 0.5, 0.618, 0.786, 1].forEach((L, i) => { c.strokeStyle = FCOL[(i + 1) % FCOL.length]; c.beginPath(); c.arc(m.x, m.y, R * L, 0, 6.2832); c.stroke(); });
+  };
+  RD.fibspiral = (c, Q, d, e) => {
+    const R = Math.hypot(Q[1].x - Q[0].x, Q[1].y - Q[0].y), phi = 1.618034, TH = 3 * Math.PI, a = R / Math.pow(phi, TH / (Math.PI / 2)), base = Math.atan2(Q[1].y - Q[0].y, Q[1].x - Q[0].x), pts = [];
+    for (let th = 0; th <= TH; th += 0.1) { const r = a * Math.pow(phi, th / (Math.PI / 2)), an = base + th - TH; pts.push({ x: Q[0].x + r * Math.cos(an), y: Q[0].y + r * Math.sin(an) }); }
+    e.poly(pts); e.dash([3, 4]); e.L(Q[0], Q[1]); e.dash();
+  };
+  RD.fibarc = (c, Q, d, e) => {
+    const R = Math.hypot(Q[1].x - Q[0].x, Q[1].y - Q[0].y), an = Math.atan2(Q[0].y - Q[1].y, Q[0].x - Q[1].x);
+    [0.382, 0.5, 0.618, 1, 1.618].forEach((L, i) => { c.strokeStyle = FCOL[(i + 1) % FCOL.length]; c.beginPath(); c.arc(Q[1].x, Q[1].y, R * L, an - Math.PI / 2, an + Math.PI / 2); c.stroke(); });
+    c.strokeStyle = '#787b86'; e.dash([4, 4]); e.L(Q[0], Q[1]); e.dash();
+  };
+  RD.fibwedge = (c, Q, d, e) => {
+    const R = Math.hypot(Q[1].x - Q[0].x, Q[1].y - Q[0].y), a1 = Math.atan2(Q[1].y - Q[0].y, Q[1].x - Q[0].x), a2 = Math.atan2(Q[2].y - Q[0].y, Q[2].x - Q[0].x);
+    e.ray(Q[0], Q[1]); e.ray(Q[0], Q[2]);
+    let dl = a2 - a1; while (dl > Math.PI) dl -= 2 * Math.PI; while (dl < -Math.PI) dl += 2 * Math.PI;
+    [0.236, 0.382, 0.5, 0.618, 0.786, 1].forEach((L, i) => { c.strokeStyle = FCOL[(i + 1) % FCOL.length]; c.beginPath(); c.arc(Q[0].x, Q[0].y, R * L, a1, a1 + dl, dl < 0); c.stroke(); });
+  };
+  RD.gannbox = (c, Q, d, e, n) => {
+    const x0 = Math.min(Q[0].x, Q[1].x), x1 = Math.max(Q[0].x, Q[1].x), y0 = Math.min(Q[0].y, Q[1].y), y1 = Math.max(Q[0].y, Q[1].y);
+    c.globalAlpha = 0.06; c.fillRect(x0, y0, x1 - x0, y1 - y0); c.globalAlpha = 1; c.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    const fr = n ? Array.from({ length: n - 1 }, (_, i) => (i + 1) / n) : [0.25, 0.382, 0.5, 0.618, 0.75];
+    c.globalAlpha = 0.55; fr.forEach((f) => { e.L({ x: x0 + (x1 - x0) * f, y: y0 }, { x: x0 + (x1 - x0) * f, y: y1 }); e.L({ x: x0, y: y0 + (y1 - y0) * f }, { x: x1, y: y0 + (y1 - y0) * f }); });
+    c.globalAlpha = 1; e.L({ x: x0, y: y0 }, { x: x1, y: y1 }); e.L({ x: x0, y: y1 }, { x: x1, y: y0 });
+  };
+  RD.gannsq = (c, Q, d, e) => RD.gannbox(c, Q, d, e, 8);
+  RD.gannsqf = (c, Q, d, e) => {
+    const s = Math.max(Math.abs(Q[1].x - Q[0].x), Math.abs(Q[1].y - Q[0].y)), sx = Q[1].x >= Q[0].x ? 1 : -1, sy = Q[1].y >= Q[0].y ? 1 : -1;
+    RD.gannbox(c, [Q[0], { x: Q[0].x + sx * s, y: Q[0].y + sy * s }], d, e, 8);
+  };
+  RD.gannfan = (c, Q, d, e) => {
+    const dx = Q[1].x - Q[0].x || 1, s = (Q[1].y - Q[0].y) / dx, dir = dx >= 0 ? 1 : -1;
+    [[1 / 8, '1x8'], [1 / 4, '1x4'], [1 / 3, '1x3'], [1 / 2, '1x2'], [1, '1x1'], [2, '2x1'], [3, '3x1'], [4, '4x1'], [8, '8x1']].forEach((m, i) => {
+      c.strokeStyle = m[0] === 1 ? (d.color || DCOL) : FCOL[(i % 8)]; const X = 4000 * dir;
+      e.L(Q[0], { x: Q[0].x + X, y: Q[0].y + s * m[0] * X });
+      const lx = Q[0].x + dir * 90; c.fillStyle = c.strokeStyle; c.font = '10px sans-serif'; c.textBaseline = 'bottom'; c.fillText(m[1], lx, Q[0].y + s * m[0] * dir * 90 - 2);
+    });
+  };
+  function labelPts(c, Q, labels, col) {
+    c.font = '700 11px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    Q.forEach((q, i) => {
+      if (!labels[i]) return; const up = (!Q[i - 1] || Q[i - 1].y > q.y) && (!Q[i + 1] || Q[i + 1].y > q.y);
+      const y = q.y + (up ? -12 : 12); c.fillStyle = col; c.fillText(labels[i], q.x, y);
+    });
+    c.textAlign = 'left';
+  }
+  const ratio = (a, b, c2, d2) => { const den = Math.abs(a - b); return den ? (Math.abs(c2 - d2) / den).toFixed(3) : '-'; };
+  function harmonic(cypher) {
+    return (c, Q, d, e) => {
+      const p = d.pts.map((q) => q.p); e.fillPoly([Q[0], Q[1], Q[2]], 0.1); e.fillPoly([Q[2], Q[3], Q[4]], 0.1);
+      e.poly(Q); e.dash([4, 4]); e.L(Q[0], Q[2]); e.L(Q[1], Q[3]); e.L(Q[2], Q[4]); e.L(Q[0], Q[4]); e.dash();
+      labelPts(c, Q, ['X', 'A', 'B', 'C', 'D'], d.color || DCOL);
+      e.tag(ratio(p[0], p[1], p[2], p[1]), (Q[1].x + Q[2].x) / 2, (Q[1].y + Q[2].y) / 2, '#363c4e', '#fff', 'c');
+      e.tag(ratio(p[1], p[2], p[3], p[2]), (Q[2].x + Q[3].x) / 2, (Q[2].y + Q[3].y) / 2, '#363c4e', '#fff', 'c');
+      e.tag(ratio(p[2], p[3], p[4], p[3]), (Q[3].x + Q[4].x) / 2, (Q[3].y + Q[4].y) / 2, '#363c4e', '#fff', 'c');
+      e.tag(ratio(p[0], p[1], p[4], p[1]), Q[4].x + 6, Q[4].y, '#363c4e');
+    };
+  }
+  RD.xabcd = harmonic(false); RD.cypher = harmonic(true);
+  RD.abcd = (c, Q, d, e) => {
+    const p = d.pts.map((q) => q.p); e.poly(Q); e.dash([4, 4]); e.L(Q[0], Q[2]); e.L(Q[1], Q[3]); e.dash(); labelPts(c, Q, ['A', 'B', 'C', 'D'], d.color || DCOL);
+    e.tag(ratio(p[0], p[1], p[2], p[1]), (Q[1].x + Q[2].x) / 2, (Q[1].y + Q[2].y) / 2, '#363c4e', '#fff', 'c');
+    e.tag(ratio(p[1], p[2], p[3], p[2]), (Q[2].x + Q[3].x) / 2, (Q[2].y + Q[3].y) / 2, '#363c4e', '#fff', 'c');
+  };
+  RD.hs = (c, Q, d, e) => {
+    e.fillPoly([Q[2], Q[3], Q[4]], 0.1); e.poly(Q);
+    const k = (Q[4].y - Q[2].y) / ((Q[4].x - Q[2].x) || 1), yat = (x) => Q[2].y + k * (x - Q[2].x);
+    c.setLineDash([5, 4]); e.L({ x: Q[0].x, y: yat(Q[0].x) }, { x: Q[6].x, y: yat(Q[6].x) }); e.dash();
+    labelPts(c, Q, ['', 'Left shoulder', '', 'Head', '', 'Right shoulder', ''], d.color || DCOL);
+  };
+  RD.trianglep = (c, Q, d, e) => { e.fillPoly([Q[0], Q[2], Q[3], Q[1]], 0.08); e.L(Q[0], Q[2]); e.L(Q[1], Q[3]); e.dash([4, 4]); e.L(Q[0], Q[1]); e.L(Q[2], Q[3]); e.dash(); };
+  RD.threedrives = (c, Q, d, e) => { e.poly(Q); labelPts(c, Q, ['', '1', 'A', '2', 'B', '3', 'C'], d.color || DCOL); };
+  const wave = (labels) => (c, Q, d, e) => { e.poly(Q); labelPts(c, Q, labels, d.color || DCOL); };
+  RD.impulse = wave(['', '1', '2', '3', '4', '5']); RD.correction = wave(['', 'A', 'B', 'C']); RD.trianglewave = wave(['', 'A', 'B', 'C', 'D', 'E']);
+  RD.doublecombo = wave(['', 'W', 'X', 'Y']); RD.triplecombo = wave(['', 'W', 'X', 'Y', 'X', 'Z']);
+  RD.cyclic = (c, Q, d, e) => {
+    const per = Q[1].x - Q[0].x; if (Math.abs(per) < 4) return;
+    for (let k = -80; k <= 80; k++) { const x = Q[0].x + per * k; if (x < -2 || x > e.pw + 2) continue; e.L({ x, y: 0 }, { x, y: e.ph }); }
+  };
+  RD.timecycles = (c, Q, d, e) => {
+    const per = Math.abs(Q[1].x - Q[0].x); if (per < 6) return; const ry = Math.max(20, Math.abs(Q[1].y - Q[0].y));
+    for (let k = -40; k <= 40; k++) { const x0 = Q[0].x + per * k; if (x0 > e.pw + per || x0 + per < 0) continue; c.beginPath(); c.ellipse(x0 + per / 2, Q[0].y, per / 2, ry, 0, Math.PI, 2 * Math.PI); c.stroke(); }
+  };
+  RD.sine = (c, Q, d, e) => {
+    const dx = Q[1].x - Q[0].x; if (Math.abs(dx) < 4) return; c.beginPath();
+    for (let x = 0; x <= e.pw; x += 3) { const y = Q[0].y + (Q[1].y - Q[0].y) * Math.sin((x - Q[0].x) / dx * Math.PI / 2); if (x) c.lineTo(x, y); else c.moveTo(x, y); } c.stroke();
+  };
+  function posDraw(c, Q, d, e) {
+    const st = posStats(d), x0 = Math.min(Q[0].x, Q[1].x), w = Math.abs(Q[1].x - Q[0].x), a = Q[0], b = Q[1], s = Q[2];
+    c.globalAlpha = 0.22; c.fillStyle = '#26a69a'; c.fillRect(x0, Math.min(a.y, b.y), w, Math.abs(b.y - a.y)); c.fillStyle = '#ef5350'; c.fillRect(x0, Math.min(a.y, s.y), w, Math.abs(s.y - a.y)); c.globalAlpha = 1;
+    c.lineWidth = 1; c.strokeStyle = '#26a69a'; e.L({ x: x0, y: b.y }, { x: x0 + w, y: b.y }); c.strokeStyle = '#ef5350'; e.L({ x: x0, y: s.y }, { x: x0 + w, y: s.y }); c.strokeStyle = '#9aa4b2'; e.L({ x: x0, y: a.y }, { x: x0 + w, y: a.y });
+    const cx = x0 + w / 2, dir = st.long ? 1 : -1;
+    e.tag('Target: ' + sgn(st.tp - st.en) + f2(st.tp - st.en) + ' (' + sgn(st.tp - st.en) + f2(pctOf(st.en, st.tp)) + '%)  ' + fmt(st.reward), cx, b.y + (b.y < a.y ? -13 : 13), '#1b8a7f', '#fff', 'c');
+    e.tag('Stop: ' + sgn(st.sl - st.en) + f2(st.sl - st.en) + ' (' + sgn(st.sl - st.en) + f2(pctOf(st.en, st.sl)) + '%)  -' + fmt(st.risk).replace('-', ''), cx, s.y + (s.y < a.y ? -13 : 13), '#c8433f', '#fff', 'c');
+    const stat = st.status === 'target' ? 'Target hit +' + fmt(st.reward).replace('$', '$') : st.status === 'stop' ? 'Stopped -' + fmt(st.risk) : st.status === 'open' ? 'Open P&L ' + fmt(st.open) : 'Not entered yet';
+    e.tag(stat + '  |  Qty ' + st.units + ' oz  |  R:R ' + st.rr.toFixed(2), cx, a.y, '#363c4e', '#fff', 'c');
+    void dir;
+  }
+  RD.longpos = posDraw; RD.shortpos = posDraw;
+  RD.forecast = (c, Q, d, e) => {
+    e.dash([5, 4]); e.L(Q[0], Q[1]); e.dash(); c.fillStyle = d.color || DCOL; arrowHead(c, Q[0], Q[1], 9);
+    const dp = d.pts[1].p - d.pts[0].p; e.tag(sgn(dp) + f2(dp) + ' (' + sgn(dp) + f2(pctOf(d.pts[0].p, d.pts[1].p)) + '%)  ' + Math.round(t2l(d.pts[1].t) - t2l(d.pts[0].t)) + ' bars', Q[1].x + 8, Q[1].y, '#363c4e');
+  };
+  RD.barspattern = (c, Q, d, e) => {
+    let i0 = Math.round(Math.min(t2l(d.pts[0].t), t2l(d.pts[1].t))), i1 = Math.round(Math.max(t2l(d.pts[0].t), t2l(d.pts[1].t)));
+    i0 = Math.max(0, i0); i1 = Math.min(HIST.length - 1, i1); if (i1 < i0) return;
+    const x0 = xl(i0), x1 = xl(i1); c.globalAlpha = 0.12; c.fillRect(x0 - 3, 0, x1 - x0 + 6, e.ph); c.globalAlpha = 1;
+    const l2 = t2l(d.pts[2].t), off = d.pts[2].p - HIST[i0].close, bw = Math.max(2, ((xl(1) - xl(0)) || 8) * 0.6);
+    for (let i = i0; i <= i1; i++) {
+      const b = HIST[i], x = xl(l2 + (i - i0)), yo = yp(b.open + off), yc = yp(b.close + off), yh = yp(b.high + off), yl = yp(b.low + off); if (x == null || yo == null) continue;
+      const col = b.close >= b.open ? '#26a69a' : '#ef5350'; c.strokeStyle = col; c.fillStyle = col; c.globalAlpha = 0.75;
+      e.L({ x, y: yh }, { x, y: yl }); c.fillRect(x - bw / 2, Math.min(yo, yc), bw, Math.max(1, Math.abs(yc - yo))); c.globalAlpha = 1;
+    }
+  };
+  RD.projection = (c, Q, d, e) => { const v = { x: Q[1].x - Q[0].x, y: Q[1].y - Q[0].y }, E2 = { x: Q[2].x + v.x, y: Q[2].y + v.y }; e.L(Q[0], Q[1]); e.dash([5, 4]); e.L(Q[2], E2); e.dash(); e.fillPoly([Q[0], Q[1], E2, Q[2]], 0.06); };
+  RD.avwap = (c, Q, d, e) => {
+    const i0 = Math.max(0, Math.ceil(t2l(d.pts[0].t))); let pv = 0, vv = 0; const pts = [];
+    for (let i = i0; i < HIST.length; i++) { const b = HIST[i], v = b.volume || 1; pv += (b.high + b.low + b.close) / 3 * v; vv += v; const x = xl(i), y = yp(pv / vv); if (x != null && y != null) pts.push({ x, y }); }
+    if (pts.length > 1) e.poly(pts); c.fillStyle = d.color || DCOL; c.beginPath(); c.arc(Q[0].x, Q[0].y, 4, 0, 6.3); c.fill();
+  };
+  function volProf(e, i0, i1, x0, maxW, d) {
+    const c = e.c; i0 = Math.max(0, i0); i1 = Math.min(HIST.length - 1, i1); if (i1 < i0) return;
+    let lo = 1e9, hi = -1e9; for (let i = i0; i <= i1; i++) { lo = Math.min(lo, HIST[i].low); hi = Math.max(hi, HIST[i].high); }
+    const rows = 30, step = (hi - lo) / rows || 1, up = new Array(rows).fill(0), dn = new Array(rows).fill(0);
+    for (let i = i0; i <= i1; i++) { const b = HIST[i], r = Math.max(0, Math.min(rows - 1, Math.floor(((b.high + b.low + b.close) / 3 - lo) / step))); (b.close >= b.open ? up : dn)[r] += b.volume || 1; }
+    let mx = 0, poc = 0; for (let r = 0; r < rows; r++) if (up[r] + dn[r] > mx) { mx = up[r] + dn[r]; poc = r; }
+    for (let r = 0; r < rows; r++) {
+      const ya = yp(lo + (r + 1) * step), yb = yp(lo + r * step); if (ya == null || yb == null) continue; const h = Math.max(1, yb - ya - 1), wu = up[r] / mx * maxW, wd = dn[r] / mx * maxW;
+      c.globalAlpha = r === poc ? 0.75 : 0.4; c.fillStyle = '#4f8cff'; c.fillRect(x0, ya, wu, h); c.fillStyle = '#ff9f43'; c.fillRect(x0 + wu, ya, wd, h); c.globalAlpha = 1;
+    }
+    const py = yp(lo + (poc + 0.5) * step); if (py != null) { c.strokeStyle = '#f23645'; e.dash([4, 3]); e.L({ x: x0, y: py }, { x: e.pw, y: py }); e.dash(); }
+  }
+  RD.volprofile = (c, Q, d, e) => { const x0 = Math.min(Q[0].x, Q[1].x), x1 = Math.max(Q[0].x, Q[1].x); c.globalAlpha = 0.07; c.fillRect(x0, 0, x1 - x0, e.ph); c.globalAlpha = 1; volProf(e, Math.round(Math.min(t2l(d.pts[0].t), t2l(d.pts[1].t))), Math.round(Math.max(t2l(d.pts[0].t), t2l(d.pts[1].t))), x0, Math.max(40, (x1 - x0) * 0.8), d); };
+  RD.avolprofile = (c, Q, d, e) => { volProf(e, Math.round(t2l(d.pts[0].t)), HIST.length - 1, Q[0].x, 140, d); e.L({ x: Q[0].x, y: 0 }, { x: Q[0].x, y: e.ph }); };
+  function measure(box, vert, horiz) {
+    return (c, Q, d, e) => {
+      const a = d.pts[0], b = d.pts[1], up = b.p >= a.p, col = up ? '#2962ff' : '#ef5350', x0 = Math.min(Q[0].x, Q[1].x), x1 = Math.max(Q[0].x, Q[1].x), y0 = Math.min(Q[0].y, Q[1].y), y1 = Math.max(Q[0].y, Q[1].y);
+      c.strokeStyle = col; c.fillStyle = col;
+      if (box) { c.globalAlpha = 0.14; c.fillRect(x0, y0, x1 - x0, y1 - y0); c.globalAlpha = 1; }
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+      if (vert) { e.L({ x: mx, y: Q[0].y }, { x: mx, y: Q[1].y }); arrowHead(c, { x: mx, y: Q[0].y }, { x: mx, y: Q[1].y }, 8); if (!box) { c.globalAlpha = 0.14; c.fillRect(x0, y0, x1 - x0, y1 - y0); c.globalAlpha = 1; } }
+      if (horiz) { e.L({ x: Q[0].x, y: my }, { x: Q[1].x, y: my }); arrowHead(c, { x: Q[0].x, y: my }, { x: Q[1].x, y: my }, 8); if (!vert) { e.L({ x: x0, y: y0 }, { x: x0, y: y1 }); e.L({ x: x1, y: y0 }, { x: x1, y: y1 }); } }
+      const dp = b.p - a.p, bars = Math.round(t2l(b.t) - t2l(a.t)), parts = [];
+      if (vert) parts.push(sgn(dp) + f2(dp) + ' (' + sgn(dp) + f2(pctOf(a.p, b.p)) + '%)');
+      if (horiz) parts.push(bars + ' bars, ' + fdur(b.t - a.t));
+      e.tag(parts.join('   '), mx, (vert ? (up ? y0 - 14 : y1 + 14) : y0 - 14), col, '#fff', 'c');
+    };
+  }
+  RD.pricerange = measure(false, true, false); RD.daterange = measure(false, false, true); RD.datepricerange = measure(true, true, true);
+  RD.brush = (c, Q, d, e) => { c.lineJoin = 'round'; c.lineCap = 'round'; e.poly(Q); };
+  RD.highlighter = (c, Q, d, e) => { c.lineJoin = 'round'; c.lineCap = 'round'; c.lineWidth = 14; c.globalAlpha = 0.32; e.poly(Q); c.globalAlpha = 1; };
+  RD.arrow = (c, Q, d, e) => { e.L(Q[0], Q[1]); c.fillStyle = d.color || DCOL; arrowHead(c, Q[0], Q[1], 11); };
+  RD.arrowmark = (c, Q, d, e) => { c.lineWidth = 5; c.lineCap = 'round'; e.L(Q[0], Q[1]); c.fillStyle = d.color || DCOL; arrowHead(c, Q[0], Q[1], 18); };
+  RD.arrowup = (c, Q, d, e) => { c.fillStyle = '#26a69a'; e.path([{ x: Q[0].x, y: Q[0].y }, { x: Q[0].x + 10, y: Q[0].y + 12 }, { x: Q[0].x + 4, y: Q[0].y + 12 }, { x: Q[0].x + 4, y: Q[0].y + 28 }, { x: Q[0].x - 4, y: Q[0].y + 28 }, { x: Q[0].x - 4, y: Q[0].y + 12 }, { x: Q[0].x - 10, y: Q[0].y + 12 }], true); c.fill(); };
+  RD.arrowdown = (c, Q, d, e) => { c.fillStyle = '#ef5350'; e.path([{ x: Q[0].x, y: Q[0].y }, { x: Q[0].x + 10, y: Q[0].y - 12 }, { x: Q[0].x + 4, y: Q[0].y - 12 }, { x: Q[0].x + 4, y: Q[0].y - 28 }, { x: Q[0].x - 4, y: Q[0].y - 28 }, { x: Q[0].x - 4, y: Q[0].y - 12 }, { x: Q[0].x - 10, y: Q[0].y - 12 }], true); c.fill(); };
+  RD.rect = (c, Q, d, e) => { const x = Math.min(Q[0].x, Q[1].x), y = Math.min(Q[0].y, Q[1].y), w = Math.abs(Q[1].x - Q[0].x), h = Math.abs(Q[1].y - Q[0].y); c.globalAlpha = 0.14; c.fillRect(x, y, w, h); c.globalAlpha = 1; c.strokeRect(x, y, w, h); };
+  RD.rotrect = (c, Q, d, e) => {
+    const vx = Q[1].x - Q[0].x, vy = Q[1].y - Q[0].y, L = Math.hypot(vx, vy) || 1, nx = -vy / L, ny = vx / L, w = (Q[2].x - Q[0].x) * nx + (Q[2].y - Q[0].y) * ny;
+    const P4 = [Q[0], Q[1], { x: Q[1].x + nx * w, y: Q[1].y + ny * w }, { x: Q[0].x + nx * w, y: Q[0].y + ny * w }]; e.fillPoly(P4, 0.14); e.poly(P4, true);
+  };
+  RD.circle = (c, Q, d, e) => { const R = Math.hypot(Q[1].x - Q[0].x, Q[1].y - Q[0].y); c.beginPath(); c.arc(Q[0].x, Q[0].y, R, 0, 6.2832); c.globalAlpha = 0.12; c.fill(); c.globalAlpha = 1; c.stroke(); };
+  RD.ellipse = (c, Q, d, e) => { const m = e.mid(Q[0], Q[1]); c.beginPath(); c.ellipse(m.x, m.y, Math.abs(Q[1].x - Q[0].x) / 2 + 0.1, Math.abs(Q[1].y - Q[0].y) / 2 + 0.1, 0, 0, 6.2832); c.globalAlpha = 0.12; c.fill(); c.globalAlpha = 1; c.stroke(); };
+  RD.polyline = (c, Q, d, e) => { if (Q.length > 2) e.fillPoly(Q, 0.08); e.poly(Q); };
+  RD.path = (c, Q, d, e) => { e.poly(Q); if (Q.length > 1) { c.fillStyle = d.color || DCOL; arrowHead(c, Q[Q.length - 2], Q[Q.length - 1], 10); } };
+  RD.triangle = (c, Q, d, e) => { e.fillPoly(Q, 0.14); e.poly(Q, true); };
+  RD.arc = (c, Q, d, e) => { const C = { x: 2 * Q[2].x - (Q[0].x + Q[1].x) / 2, y: 2 * Q[2].y - (Q[0].y + Q[1].y) / 2 }; c.beginPath(); c.moveTo(Q[0].x, Q[0].y); c.quadraticCurveTo(C.x, C.y, Q[1].x, Q[1].y); c.globalAlpha = 0.1; c.fill(); c.globalAlpha = 1; c.stroke(); };
+  RD.curve = (c, Q, d, e) => { const m = e.mid(Q[0], Q[1]), vx = Q[1].x - Q[0].x, vy = Q[1].y - Q[0].y; c.beginPath(); c.moveTo(Q[0].x, Q[0].y); c.quadraticCurveTo(m.x - vy * 0.3, m.y + vx * 0.3, Q[1].x, Q[1].y); c.stroke(); };
+  RD.doublecurve = (c, Q, d, e) => { const mx = (Q[0].x + Q[1].x) / 2; c.beginPath(); c.moveTo(Q[0].x, Q[0].y); c.bezierCurveTo(mx, Q[0].y, mx, Q[1].y, Q[1].x, Q[1].y); c.stroke(); };
+  RD.text = (c, Q, d, e) => { c.font = '600 14px sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillStyle = d.color || DCOL; c.fillText(d.text || '', Q[0].x, Q[0].y); };
+  RD.note = (c, Q, d, e) => { e.tag(d.text || '', Q[0].x, Q[0].y, d.color || DCOL, '#10141a', 'c'); };
+  RD.comment = (c, Q, d, e) => { e.tag(d.text || '', Q[0].x + 4, Q[0].y - 14, '#363c4e'); c.beginPath(); c.arc(Q[0].x, Q[0].y, 3, 0, 6.3); c.fillStyle = d.color || DCOL; c.fill(); };
+  RD.callout = (c, Q, d, e) => { e.L(Q[0], Q[1]); c.beginPath(); c.arc(Q[0].x, Q[0].y, 3.5, 0, 6.3); c.fillStyle = d.color || DCOL; c.fill(); e.tag(d.text || '', Q[1].x, Q[1].y, d.color || DCOL, '#10141a', 'c'); };
+  RD.pricelabel = (c, Q, d, e) => { c.fillStyle = d.color || DCOL; arrowHead(c, { x: Q[0].x + 12, y: Q[0].y }, { x: Q[0].x, y: Q[0].y }, 8); e.tag(d.pts[0].p.toFixed(2), Q[0].x + 6, Q[0].y, d.color || DCOL, '#10141a'); };
+  RD.pricenote = (c, Q, d, e) => { e.dash([3, 4]); e.L(Q[0], Q[1]); e.dash(); c.beginPath(); c.arc(Q[0].x, Q[0].y, 3, 0, 6.3); c.fillStyle = d.color || DCOL; c.fill(); e.tag((d.text || '') + '  ' + d.pts[0].p.toFixed(2), Q[1].x + 6, Q[1].y, d.color || DCOL, '#10141a'); };
+  RD.pin = (c, Q, d, e) => { e.L(Q[0], { x: Q[0].x, y: Q[0].y - 14 }); c.beginPath(); c.arc(Q[0].x, Q[0].y - 20, 7, 0, 6.3); c.fillStyle = d.color || DCOL; c.fill(); if (d.text) e.tag(d.text, Q[0].x + 12, Q[0].y - 22, '#363c4e'); };
+  RD.signpost = (c, Q, d, e) => { e.L({ x: Q[0].x, y: Q[0].y }, { x: Q[0].x, y: e.ph }); e.tag(d.text || '', Q[0].x + 2, Q[0].y, d.color || DCOL, '#10141a'); };
+  RD.flagnote = (c, Q, d, e) => { e.L(Q[0], { x: Q[0].x, y: Q[0].y - 36 }); e.tag(d.text || '', Q[0].x + 1, Q[0].y - 30, d.color || DCOL, '#10141a'); };
+
+  // ---------- drawing state / UI ----------
   function setDirty() { dVer++; }
+  const magLabel = () => ['Magnet off', 'Weak magnet', 'Strong magnet'][(P.set && P.set.magnet) || 0];
+  const dfavs = () => { const f = P.set && P.set.dfavs; return Array.isArray(f) ? f : ['trend', 'hline', 'rect', 'fib', 'longpos', 'shortpos']; };
   function setOvMode() {
     const ov = $('#ov'); if (!ov) return;
     ov.classList.toggle('act', dTool !== 'cur' || dGrab);
     document.querySelectorAll('[data-dt]').forEach((b) => b.classList.toggle('on', b.dataset.dt === dTool));
+    const tb = $('#dt_tools'); if (tb) tb.classList.toggle('on', dTool !== 'cur');
     const dl = $('#dt_del'); if (dl) dl.classList.toggle('dis', dSel == null);
   }
+  function pickTool(id) {
+    dTool = id; dDraft = null; if (id !== 'cur') { dSel = null; dGrab = false; }
+    const pn = $('#toolpanel'); if (pn) pn.classList.remove('on');
+    setDirty(); drawTb(); drawFav();
+  }
+  function cycleMagnet() { P.set.magnet = ((P.set.magnet || 0) + 1) % 3; saveP(); drawTb(); toast(magLabel()); }
+  function toggleFav(id) { let f = dfavs().slice(); f = f.includes(id) ? f.filter((x) => x !== id) : f.concat(id); P.set.dfavs = f; saveP(); drawFav(); drawToolPanel(); }
   function drawTb() {
     const el = $('#dtb'); if (!el) return;
-    el.innerHTML = '<button id="dt_open" class="dtb0' + (dtbOpen ? ' on' : '') + '" title="Drawing tools">&#9998;</button>' +
-      (dtbOpen ? '<div class="dtl">' + DTOOLS.map((t) => '<button data-dt="' + t[0] + '" title="' + t[2] + '">' + t[1] + '</button>').join('') +
-        '<button id="dt_del" class="dis" title="Delete selected">&times;</button><button id="dt_clr" title="Clear all drawings">Clr</button></div>' : '');
-    $('#dt_open').onclick = () => { dtbOpen = !dtbOpen; if (!dtbOpen) { dTool = 'cur'; dDraft = null; dSel = null; dGrab = false; setDirty(); } drawTb(); setOvMode(); };
-    document.querySelectorAll('[data-dt]').forEach((b) => (b.onclick = () => { dTool = b.dataset.dt; dDraft = null; if (dTool !== 'cur') { dSel = null; dGrab = false; } setDirty(); setOvMode(); }));
-    if (dtbOpen) {
-      $('#dt_del').onclick = () => { delSel(); };
-      $('#dt_clr').onclick = () => { if (!(S.draws || []).length) return; if (confirm('Clear all drawings?')) { S.draws = []; dSel = null; dGrab = false; saveP(); setDirty(); setOvMode(); } };
-    }
+    const mg = (P.set && P.set.magnet) || 0, d = dSel != null && S.draws ? S.draws[dSel] : null;
+    el.innerHTML = '<button id="dt_tools" class="ib' + (dTool !== 'cur' ? ' on' : '') + '" title="Drawing tools">' + (dTool !== 'cur' && TOOL[dTool] ? TOOL[dTool].icon : UI.pencil) + '</button>' +
+      '<button id="dt_cur" class="ib' + (dTool === 'cur' ? ' on' : '') + '" title="Cursor (Esc)">' + UI.cursor + '</button>' +
+      '<button id="dt_mag" class="ib' + (mg ? ' on' : '') + '" title="' + magLabel() + '">' + UI.magnet + (mg ? '<span class="mgb">' + (mg === 1 ? 'W' : 'S') + '</span>' : '') + '</button>' +
+      '<button id="dt_del" class="ib dis" title="Delete selected drawing">' + UI.trash + '</button>' +
+      (d ? '<span class="dsw">' + DSW.map((cl) => '<i data-dc="' + cl + '" style="background:' + cl + '"' + (d.color === cl ? ' class="on"' : '') + '></i>').join('') + '<button class="ib wd" id="dt_w" title="Line width">' + (d.w || 1.5) + '</button></span>' : '');
+    $('#dt_tools').onclick = (e) => { e.stopPropagation(); const p = $('#toolpanel'); drawToolPanel(); p.classList.toggle('on'); };
+    $('#dt_cur').onclick = () => { pickTool('cur'); };
+    $('#dt_mag').onclick = cycleMagnet;
+    $('#dt_del').onclick = delSel;
+    document.querySelectorAll('[data-dc]').forEach((b) => (b.onclick = () => { if (d) { d.color = b.dataset.dc; saveP(); setDirty(); drawTb(); } }));
+    const w = $('#dt_w'); if (w) w.onclick = () => { d.w = d.w === 1.5 || !d.w ? 3 : d.w === 3 ? 1 : 1.5; saveP(); setDirty(); drawTb(); };
     setOvMode();
+  }
+  function drawToolPanel() {
+    const pn = $('#toolpanel'); if (!pn) return; const fav = dfavs(); let cat = '', h = '';
+    TOOLS.forEach((t) => {
+      if (t[2] !== cat) { cat = t[2]; h += '<div class="tpcat">' + cat + '</div>'; }
+      h += '<div class="tprow"><button class="tpn" data-pt="' + t[0] + '"><span class="tpi">' + TOOL[t[0]].icon + '</span>' + t[1] + '</button><button class="tps' + (fav.includes(t[0]) ? ' on' : '') + '" data-pf="' + t[0] + '" title="Favorite">' + (fav.includes(t[0]) ? UI.starOn : UI.star) + '</button></div>';
+    });
+    pn.innerHTML = h;
+    pn.querySelectorAll('[data-pt]').forEach((b) => (b.onclick = () => pickTool(b.dataset.pt)));
+    pn.querySelectorAll('[data-pf]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const sc = pn.scrollTop; toggleFav(b.dataset.pf); pn.scrollTop = sc; }));
+  }
+  function drawFav() {
+    const el = $('#favis'); if (!el) return; const fav = dfavs().filter((id) => TOOL[id]);
+    el.style.display = fav.length ? '' : 'none';
+    el.innerHTML = '<div class="grip" data-grip="fav" title="Drag to move">' + UI.grip + '</div>' + fav.map((id) => '<button class="ib' + (dTool === id ? ' on' : '') + '" data-dt="' + id + '" title="' + TOOL[id].name + '">' + TOOL[id].icon + '</button>').join('');
+    el.querySelectorAll('[data-dt]').forEach((b) => (b.onclick = () => pickTool(dTool === b.dataset.dt ? 'cur' : b.dataset.dt)));
+    placeMovable('fav'); bindGrip(el.querySelector('.grip'), el, 'fav');
   }
   function delSel() {
     if (dSel == null || !S.draws || !S.draws[dSel]) return;
-    S.draws.splice(dSel, 1); dSel = null; dGrab = false; saveP(); setDirty(); setOvMode();
+    S.draws.splice(dSel, 1); dSel = null; dGrab = false; saveP(); setDirty(); drawTb();
   }
 
-  function paintOne(ctx, d, sel, pw, ph) {
-    const P0 = d.pts.map(proj); if (P0.some((q) => !q)) return;
-    ctx.strokeStyle = d.color || DCOL; ctx.fillStyle = d.color || DCOL; ctx.lineWidth = sel ? 2 : 1.5; ctx.setLineDash([]);
-    const a = P0[0], b = P0[1];
-    if (d.type === 'trend') { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
-    else if (d.type === 'ray') {
-      const dx = b.x - a.x, dy = b.y - a.y; let k = 1;
-      if (dx || dy) { k = 1e5 / Math.hypot(dx, dy); }
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x + dx * k, a.y + dy * k); ctx.stroke();
-    } else if (d.type === 'hline') {
-      ctx.beginPath(); ctx.moveTo(0, a.y); ctx.lineTo(pw, a.y); ctx.stroke();
-      const lbl = d.pts[0].p.toFixed(2); ctx.font = '11px sans-serif'; const tw = ctx.measureText(lbl).width + 10;
-      ctx.fillRect(pw, a.y - 8, tw, 16); ctx.fillStyle = '#10141a'; ctx.textBaseline = 'middle'; ctx.fillText(lbl, pw + 5, a.y); ctx.fillStyle = d.color || DCOL;
-    } else if (d.type === 'vline') { ctx.beginPath(); ctx.moveTo(a.x, 0); ctx.lineTo(a.x, ph); ctx.stroke(); }
-    else if (d.type === 'rect') {
-      ctx.globalAlpha = 0.14; ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y)); ctx.globalAlpha = 1;
-      ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-    } else if (d.type === 'fib') {
-      const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x) + (Math.abs(b.x - a.x) < 40 ? 60 : 0);
-      ctx.font = '11px sans-serif'; ctx.textBaseline = 'bottom';
-      FIBS.forEach((L) => {
-        const pr = d.pts[1].p + (d.pts[0].p - d.pts[1].p) * L, y = series.priceToCoordinate(pr); if (y == null) return;
-        ctx.globalAlpha = L === 0 || L === 1 ? 1 : 0.7; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); ctx.globalAlpha = 1;
-        ctx.fillText(L + '  (' + pr.toFixed(2) + ')', x0 + 4, y - 2);
-      });
-      ctx.setLineDash([4, 4]); ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.globalAlpha = 1; ctx.setLineDash([]);
-    } else if (d.type === 'text') { ctx.font = '600 13px sans-serif'; ctx.textBaseline = 'middle'; ctx.fillText(d.text || '', a.x, a.y); }
-    if (sel && d.type !== 'hline' && d.type !== 'vline' && d.type !== 'text') {
-      ctx.fillStyle = '#fff'; ctx.strokeStyle = d.color || DCOL; ctx.lineWidth = 2;
-      P0.forEach((q) => { ctx.beginPath(); ctx.arc(q.x, q.y, 5, 0, 6.3); ctx.fill(); ctx.stroke(); });
+  // ---- movable islands ----
+  function placeMovable(key) {
+    const el = key === 'fav' ? $('#favis') : $('.island'), wrap = $('#chartwrap'); if (!el || !wrap) return;
+    const p = P.set && P.set.pos && P.set.pos[key]; if (!p) return;
+    const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
+    el.style.left = Math.max(0, Math.min(W - w, p.fx * W)) + 'px'; el.style.top = Math.max(0, Math.min(H - h, p.fy * H)) + 'px';
+    el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
+  }
+  function bindGrip(g, el, key) {
+    if (!g) return; let st = null;
+    g.onpointerdown = (e) => { e.preventDefault(); e.stopPropagation(); const r = el.getBoundingClientRect(); st = { dx: e.clientX - r.left, dy: e.clientY - r.top }; try { g.setPointerCapture(e.pointerId); } catch (x) {} };
+    g.onpointermove = (e) => {
+      if (!st) return; const wr = $('#chartwrap').getBoundingClientRect();
+      const x = Math.max(0, Math.min(wr.width - el.offsetWidth, e.clientX - wr.left - st.dx)), y = Math.max(0, Math.min(wr.height - el.offsetHeight, e.clientY - wr.top - st.dy));
+      el.style.left = x + 'px'; el.style.top = y + 'px'; el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
+    };
+    g.onpointerup = g.onpointercancel = () => {
+      if (!st) return; st = null; const wr = $('#chartwrap'); P.set.pos = P.set.pos || {};
+      P.set.pos[key] = { fx: parseFloat(el.style.left) / wr.clientWidth, fy: parseFloat(el.style.top) / wr.clientHeight }; saveP();
+    };
+    g.ondblclick = () => { if (P.set.pos) delete P.set.pos[key]; saveP(); el.style.left = el.style.top = el.style.right = el.style.bottom = el.style.transform = ''; };
+  }
+
+  // ---------- painting ----------
+  function paintOne(ctx, d, sel, pw, ph, hit) {
+    const r = RD[d.type]; if (!r) return;
+    const Q = d.pts.map(proj); if (!Q.length || Q.some((q) => !q)) return;
+    const col = d.color || DCOL, e = mkEnv(ctx, pw, ph, d);
+    ctx.save(); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = hit ? 12 : (d.w || 1.5) + (sel ? 0.5 : 0); ctx.setLineDash([]); ctx.lineJoin = 'round'; ctx.globalAlpha = 1;
+    try { r(ctx, Q, d, e); } catch (x) { /* a bad drawing must never break the chart */ }
+    ctx.restore();
+    if (!hit && e.post.length) { ctx.save(); e.post.forEach((f) => { try { f(); } catch (x) {} }); ctx.restore(); }
+    if (sel && !hit && d.type !== 'brush' && d.type !== 'highlighter') {
+      ctx.save(); ctx.fillStyle = '#fff'; ctx.strokeStyle = col; ctx.lineWidth = 2;
+      Q.slice(0, 14).forEach((q) => { ctx.beginPath(); ctx.arc(q.x, q.y, 5, 0, 6.3); ctx.fill(); ctx.stroke(); }); ctx.restore();
     }
+  }
+  function draftPts() {
+    const d = dDraft; if (!d) return null; const pts = d.pts.slice(), cur = d.cur || pts[pts.length - 1];
+    if (d.n > 0) { while (pts.length < d.n) pts.push(cur); } else if (!(d.n === -1)) pts.push(cur);
+    return pts;
   }
   function ovDraw() {
     const cv = $('#ov'), wrap = $('#chartwrap'); if (!cv || !wrap || !chart || !series || !S) return;
@@ -489,136 +1312,293 @@
     if (cv.width !== Math.round(ps.w * dpr) || cv.height !== Math.round(ps.h * dpr)) { cv.width = Math.round(ps.w * dpr); cv.height = Math.round(ps.h * dpr); cv.style.width = ps.w + 'px'; cv.style.height = ps.h + 'px'; }
     const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, ps.w, ps.h);
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, ps.pw, ps.ph); ctx.clip();
-    // trade history: dotted line entry -> exit
-    (S.hist || []).forEach((h) => {
+    if (!S.hideMk) (S.hist || []).forEach((h) => {
       const a = proj({ t: h.t0 * 60, p: h.entry }), b = proj({ t: h.t1 * 60, p: h.exit }); if (!a || !b) return;
       ctx.strokeStyle = h.pnl >= 0 ? '#26a69a' : '#ef5350'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 4]);
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.setLineDash([]);
     });
     (S.draws || []).forEach((d, i) => paintOne(ctx, d, i === dSel, ps.pw, ps.ph));
-    if (dDraft && dDraft.pts[1]) paintOne(ctx, Object.assign({ color: DCOL }, dDraft), true, ps.pw, ps.ph);
+    const dp = draftPts(); if (dp) paintOne(ctx, { type: dDraft.type, pts: dp, color: DCOL, w: 1.5, text: '' }, true, ps.pw, ps.ph);
     ctx.restore();
   }
   function ovLoop() {
     ovRaf = 0;
     if (!chart || !series || !S || !$('#ov')) return;
     try {
-      const lr = chart.timeScale().getVisibleLogicalRange(), n = HIST.length, c = n ? HIST[n - 1].close : 0, w = $('#chartwrap');
-      const sig = [lr ? lr.from.toFixed(3) + lr.to.toFixed(3) : '', series.priceToCoordinate(c), series.priceToCoordinate(c + 10), S.cur, n, w.clientWidth, w.clientHeight, dVer, dSel, S.tf].join('|');
+      const lr = chart.timeScale().getVisibleLogicalRange(), n = HIST.length, c = n ? HIST[n - 1].close : 0, w = $('#chartwrap'), man = isManual();
+      const ab = $('#c_auto'); if (ab) ab.classList.toggle('on', !man);
+      const sig = [lr ? lr.from.toFixed(3) + lr.to.toFixed(3) : '', series.priceToCoordinate(c), series.priceToCoordinate(c + 10), S.cur, n, w.clientWidth, w.clientHeight, dVer, dSel, S.tf, S.hideMk ? 1 : 0].join('|');
       if (sig !== ovSig) { ovSig = sig; ovDraw(); }
     } catch (e) {}
     ovRaf = requestAnimationFrame(ovLoop);
   }
 
-  // hit test in px; returns {i, h} (h = handle index or -1)
+  // ---------- chart view: remember it, reset it only on request ----------
+  let savedView = null, viewTouched = false;
+  function getPR() { const ph = plotSize().ph; return { top: series.coordinateToPrice(ph * 0.08), bot: series.coordinateToPrice(ph * 0.86) }; }
+
+  const isManual = () => man;
+  function captureView() {
+    if (!chart || !series || !S || !HIST.length) return null;
+    try {
+      const lr = chart.timeScale().getVisibleLogicalRange(); if (!lr) return null;
+      return { key: S.vid, tfSec: S.tf * 60, edgeT: l2t(lr.to), span: lr.to - lr.from, manual: isManual(), top: getPR().top, bot: getPR().bot, k: PZ.k, off: PZ.off, touched: viewTouched };
+    } catch (e) { return null; }
+  }
+  function applyView(v) {
+    const l1 = t2l(v.edgeT), span = Math.max(10, Math.min(900, v.span * (v.tfSec || S.tf * 60) / (S.tf * 60))); man = !!v.manual;
+    chart.timeScale().setVisibleLogicalRange({ from: l1 - span, to: l1 });
+    if (v.manual && v.top != null && v.bot != null && isFinite(v.top) && isFinite(v.bot) && v.top > v.bot) { try { series.priceScale().setVisibleRange({ from: v.bot, to: v.top }); } catch (e) {} }
+    else { PZ.k = v.k || 1; PZ.off = v.off || 0; try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
+    viewTouched = !!v.touched;
+  }
+  function setManual(on) {
+    man = on;
+    try { series.priceScale().applyOptions({ autoScale: !on }); } catch (e) {}
+    if (!on) { PZ.k = 1; PZ.off = 0; setDirty(); }
+  }
+  function resetView() {
+    viewTouched = false; setManual(false); PZ.k = 1; PZ.off = 0;
+    chart.timeScale().applyOptions({ barSpacing: 9 });
+    chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, HIST.length - 60), to: HIST.length + 6 });
+    setDirty(); toast('Chart reset');
+  }
+
+  // ---------- hit testing: render each drawing thick on an offscreen canvas ----------
+  let hcv = null;
   function hitTest(x, y) {
-    const ds = S.draws || [], ps = plotSize();
+    const ds = S.draws || []; if (!ds.length) return null;
+    if (dSel != null && ds[dSel] && !/^(brush|highlighter)$/.test(ds[dSel].type)) {
+      const Q = ds[dSel].pts.map(proj);
+      for (let k = 0; k < Q.length; k++) if (Q[k] && Math.hypot(x - Q[k].x, y - Q[k].y) < 14) return { i: dSel, h: k };
+    }
+    const ps = plotSize(); hcv = hcv || document.createElement('canvas');
+    if (hcv.width !== Math.round(ps.w) || hcv.height !== Math.round(ps.h)) { hcv.width = Math.round(ps.w); hcv.height = Math.round(ps.h); }
+    const hc = hcv.getContext('2d', { willReadFrequently: true });
     for (let i = ds.length - 1; i >= 0; i--) {
-      const d = ds[i], Q = d.pts.map(proj); if (Q.some((q) => !q)) continue;
-      const a = Q[0], b = Q[1];
-      if (i === dSel && d.type !== 'hline' && d.type !== 'vline' && d.type !== 'text') for (let k = 0; k < Q.length; k++) if (Math.hypot(x - Q[k].x, y - Q[k].y) < 14) return { i, h: k };
-      let hit = false;
-      if (d.type === 'trend') hit = distSeg(x, y, a, b) < 9;
-      else if (d.type === 'ray') { const dx = b.x - a.x, dy = b.y - a.y, k = (dx || dy) ? 1e5 / Math.hypot(dx, dy) : 1; hit = distSeg(x, y, a, { x: a.x + dx * k, y: a.y + dy * k }) < 9; }
-      else if (d.type === 'hline') hit = Math.abs(y - a.y) < 9;
-      else if (d.type === 'vline') hit = Math.abs(x - a.x) < 9;
-      else if (d.type === 'rect') { const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y); hit = x >= x0 - 8 && x <= x1 + 8 && y >= y0 - 8 && y <= y1 + 8; }
-      else if (d.type === 'fib') {
-        const x0 = Math.min(a.x, b.x) - 8, x1 = Math.max(a.x, b.x) + 60;
-        hit = x >= x0 && x <= x1 && FIBS.some((L) => { const yy = series.priceToCoordinate(d.pts[1].p + (d.pts[0].p - d.pts[1].p) * L); return yy != null && Math.abs(y - yy) < 9; });
-      } else if (d.type === 'text') { hit = Math.abs(y - a.y) < 14 && x >= a.x - 6 && x <= a.x + 14 + (d.text || '').length * 8; }
-      if (hit) return { i, h: -1 };
+      hc.setTransform(1, 0, 0, 1, 0, 0); hc.clearRect(0, 0, hcv.width, hcv.height);
+      paintOne(hc, ds[i], false, ps.pw, ps.ph, true);
+      if (x >= 0 && y >= 0 && x < hcv.width && y < hcv.height && hc.getImageData(Math.round(x), Math.round(y), 1, 1).data[3] > 0) return { i, h: -1 };
     }
     return null;
   }
   function localXY(e) { const r = $('#chartwrap').getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
   function inPlot(x, y) { const ps = plotSize(); return x >= 0 && y >= 0 && x <= ps.pw && y <= ps.ph; }
+  const isPos = (d) => d.type === 'longpos' || d.type === 'shortpos';
+
+  // ---------- creating drawings ----------
+  function addDraw(o) {
+    S.draws = S.draws || []; o.color = o.color || DCOL; o.w = o.w || 1.5; S.draws.push(o); dSel = S.draws.length - 1; saveP();
+    dTool = 'cur'; dGrab = touchy; setDirty(); drawTb(); drawFav(); setOvMode();
+  }
+  function askText(def) { const t = window.prompt('Text', def || ''); return t == null ? null : t.trim(); }
   function finishDraft() {
-    const d = dDraft; dDraft = null;
-    if (d && d.pts[1] && (Math.abs(d.pts[1].l - d.pts[0].l) > 0.05 || Math.abs(d.pts[1].p - d.pts[0].p) > 0.01)) {
-      S.draws = S.draws || []; S.draws.push({ type: d.type, pts: d.pts.map((q) => ({ t: q.t, p: q.p })), color: DCOL }); dSel = S.draws.length - 1; saveP();
+    const d = dDraft; dDraft = null; if (!d) return;
+    let pts = d.pts.map((q) => ({ t: q.t, p: q.p }));
+    const need = d.n > 0 ? d.n : 2;
+    if (pts.length < need) { dTool = 'cur'; setDirty(); drawTb(); drawFav(); setOvMode(); return; }
+    const o = { type: d.type, pts };
+    if (d.type === 'callout' || d.type === 'pricenote') { const t = askText(''); if (t == null) { dTool = 'cur'; setDirty(); drawTb(); setOvMode(); return; } o.text = t; }
+    addDraw(o);
+  }
+  function startDraft(u, e, ov) {
+    const tl = TOOL[dTool], n = tl.n;
+    if (n === 1) {
+      if (dTool === 'longpos' || dTool === 'shortpos') {
+        const dir = dTool === 'longpos' ? 1 : -1, dist = defaultDist(), t1 = l2t(u.l + 30);
+        addDraw({ type: dTool, pts: [{ t: u.t, p: u.p }, { t: t1, p: +(u.p + dir * dist * Math.max(1, P.plan.risk.minRR)).toFixed(2) }, { t: t1, p: +(u.p - dir * dist).toFixed(2) }] }); return;
+      }
+      const o = { type: dTool, pts: [{ t: u.t, p: u.p }] };
+      if (TEXTY[dTool]) { const t = askText(''); if (!t) { dTool = 'cur'; drawTb(); setOvMode(); return; } o.text = t; }
+      addDraw(o); return;
     }
-    dTool = 'cur'; dGrab = dSel != null; setDirty(); setOvMode();
+    dDraft = { type: dTool, n, pts: [u], cur: u, sx: e.clientX, sy: e.clientY, fresh: true }; setDirty();
+    try { ov.setPointerCapture(e.pointerId); } catch (x) {}
   }
   function bindDraw() {
     const ov = $('#ov'), wrap = $('#chartwrap');
     ov.addEventListener('pointerdown', (e) => {
       const { x, y } = localXY(e); e.preventDefault(); e.stopPropagation();
       if (dTool !== 'cur') {
-        const u = unproj(x, y); if (!u || !inPlot(x, y)) return;
-        if (dTool === 'hline' || dTool === 'vline' || dTool === 'text') {
-          let txt = '';
-          if (dTool === 'text') { txt = (window.prompt('Text') || '').trim(); if (!txt) { dTool = 'cur'; setOvMode(); return; } }
-          S.draws = S.draws || []; S.draws.push({ type: dTool, pts: [{ t: u.t, p: u.p }], color: DCOL, text: txt }); dSel = S.draws.length - 1; dTool = 'cur'; dGrab = true; saveP(); setDirty(); setOvMode(); return;
-        }
-        if (dDraft && dDraft.armed) { dDraft.pts[1] = u; finishDraft(); return; }
-        dDraft = { type: dTool, pts: [u, u], sx: e.clientX, sy: e.clientY, armed: false }; setDirty();
-        try { ov.setPointerCapture(e.pointerId); } catch (x2) {}
-        return;
+        const u = unproj(x, y, true); if (!u || !inPlot(x, y)) return;
+        if (!dDraft) { startDraft(u, e, ov); return; }
+        if (dDraft.n === 0) {
+          const q = proj(dDraft.pts[dDraft.pts.length - 1]); if (q && Math.hypot(q.x - x, q.y - y) < 9) { finishDraft(); return; }
+          dDraft.pts.push(u);
+        } else { dDraft.pts.push(u); if (dDraft.pts.length >= dDraft.n) { finishDraft(); return; } }
+        dDraft.fresh = false; dDraft.cur = u; setDirty(); return;
       }
-      // grab mode: move / reshape the selected drawing
+      // pick up / reshape the selected drawing
       const h = hitTest(x, y);
-      if (!h) { dSel = null; dGrab = false; setDirty(); setOvMode(); return; }
+      if (!h) { dSel = null; dGrab = false; setDirty(); drawTb(); setOvMode(); return; }
       dSel = h.i; const d = S.draws[h.i], u = unproj(x, y);
       dDrag = { i: h.i, h: h.h, l0: u ? u.l : 0, p0: u ? u.p : 0, orig: d.pts.map((q) => ({ t: q.t, p: q.p })), moved: false };
-      try { ov.setPointerCapture(e.pointerId); } catch (x2) {} setDirty();
+      try { ov.setPointerCapture(e.pointerId); } catch (x2) {} setDirty(); drawTb();
     });
     ov.addEventListener('pointermove', (e) => {
       const { x, y } = localXY(e);
-      if (dDraft) { const u = unproj(x, y); if (u) { dDraft.pts[1] = u; setDirty(); } return; }
+      if (dDraft) {
+        const u = unproj(x, y, true); if (!u) return; dDraft.cur = u;
+        if (dDraft.n === -1 && e.buttons) { const q = proj(dDraft.pts[dDraft.pts.length - 1]); if (!q || Math.hypot(q.x - x, q.y - y) > 3) dDraft.pts.push(u); }
+        setDirty(); return;
+      }
       if (dDrag) {
-        const u = unproj(x, y); if (!u) return; const d = S.draws[dDrag.i]; if (!d) return; dDrag.moved = true;
-        if (dDrag.h >= 0) d.pts[dDrag.h] = { t: u.t, p: u.p };
-        else { const dl = u.l - dDrag.l0, dp = u.p - dDrag.p0; d.pts = dDrag.orig.map((q) => ({ t: l2t(t2l(q.t) + dl), p: Math.round((q.p + dp) * 100) / 100 })); }
+        const u = unproj(x, y, dDrag.h >= 0); if (!u) return; const d = S.draws[dDrag.i]; if (!d) return; dDrag.moved = true;
+        if (dDrag.h >= 0) {
+          if (isPos(d)) {
+            if (dDrag.h === 0) d.pts[0] = { t: u.t, p: u.p };
+            else if (dDrag.h === 1) { d.pts[1] = { t: u.t, p: u.p }; d.pts[2] = { t: u.t, p: d.pts[2].p }; }
+            else d.pts[2] = { t: d.pts[1].t, p: u.p };
+          } else d.pts[dDrag.h] = { t: u.t, p: u.p };
+        } else { const dl = u.l - dDrag.l0, dp = u.p - dDrag.p0; d.pts = dDrag.orig.map((q) => ({ t: l2t(t2l(q.t) + dl), p: Math.round((q.p + dp) * 100) / 100 })); }
         setDirty();
       }
     });
     const up = (e) => {
-      if (dDraft) {
-        const moved = Math.hypot(e.clientX - dDraft.sx, e.clientY - dDraft.sy);
-        if (moved > 8) finishDraft(); else dDraft.armed = true; // tap: place the second point with the next tap
+      if (dDraft && dDraft.fresh) {
+        dDraft.fresh = false;
+        if (dDraft.n === -1) { finishDraft(); return; }
+        if (dDraft.pts.length === 1 && Math.hypot(e.clientX - dDraft.sx, e.clientY - dDraft.sy) > 8) {
+          dDraft.pts.push(dDraft.cur); if (dDraft.n > 0 && dDraft.pts.length >= dDraft.n) finishDraft();
+        }
         return;
       }
       if (dDrag) { const m = dDrag.moved; dDrag = null; if (m) saveP(); setDirty(); }
     };
     ov.addEventListener('pointerup', up); ov.addEventListener('pointercancel', () => { dDrag = null; });
-    // cursor mode: pick up a drawing when you press on it (mouse) or tap it (touch)
+    ov.addEventListener('dblclick', () => { if (dDraft && dDraft.n === 0) finishDraft(); });
+    // cursor mode with a mouse: click a drawing to pick it up
     wrap.addEventListener('pointerdown', (e) => {
-      if (dTool !== 'cur' || dGrab || e.target === ov || e.target.closest('#dtb,.island,.hd,.spw')) return;
-      if (!(S.draws || []).length) return;
-      const { x, y } = localXY(e); const h = hitTest(x, y); if (!h) return;
-      dSel = h.i; dGrab = true; setOvMode(); setDirty();
+      if (e.button === 2 || e.target.closest('#dtb,#favis,#toolpanel,.island,.hd,.spw,#c_auto,#ctxm')) return;
+      if (dTool !== 'cur' || dGrab || e.target === ov) return;
+      const { x, y } = localXY(e), h = (S.draws || []).length ? hitTest(x, y) : null;
+      if (!h) { if (dSel != null) { dSel = null; setDirty(); drawTb(); } return; }
+      dSel = h.i; dGrab = e.pointerType !== 'mouse'; setOvMode(); setDirty(); drawTb();
       if (e.pointerType === 'mouse') {
-        e.preventDefault(); e.stopPropagation();
+        e.preventDefault(); e.stopImmediatePropagation();
         const u = unproj(x, y), d = S.draws[h.i];
-        dDrag = { i: h.i, h: -1, l0: u ? u.l : 0, p0: u ? u.p : 0, orig: d.pts.map((q) => ({ t: q.t, p: q.p })), moved: false };
+        dDrag = { i: h.i, h: h.h, l0: u ? u.l : 0, p0: u ? u.p : 0, orig: d.pts.map((q) => ({ t: q.t, p: q.p })), moved: false };
         try { ov.setPointerCapture(e.pointerId); } catch (x2) {}
       }
     }, true);
+    // dragging the plot or the price axis vertically unlocks the price scale (stays until you reset it)
+    wrap.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('#dtb,#favis,#toolpanel,.island,.hd,.spw,#c_auto,#ctxm') || e.target === ov) return;
+      gs = { y: e.clientY, x: e.clientX }; viewTouched = true;
+    }, true);
+    if (!docBound) {
+      docBound = true;
+      document.addEventListener('pointermove', (e) => { if (gs && (e.buttons & 1) && Math.abs(e.clientY - gs.y) > 3) { gs = null; if (chart && !isManual()) setManual(true); } });
+      document.addEventListener('pointerup', () => { gs = null; });
+    }
     // wheel over the price axis: zoom the price scale (shift = pan up/down)
     wrap.addEventListener('wheel', (e) => {
       if (!chart || !series) return;
       const r = wrap.getBoundingClientRect(); let pw = 56; try { pw = chart.priceScale('right').width(); } catch (x2) {}
-      if (e.clientX - r.left < r.width - pw) return;
-      e.preventDefault(); e.stopPropagation();
+      if (e.clientX - r.left < r.width - pw) { viewTouched = true; return; }
+      e.preventDefault(); e.stopPropagation(); viewTouched = true;
       const dy = Math.max(-200, Math.min(200, e.deltaY));
-      if (e.shiftKey) PZ.off = Math.max(-3, Math.min(3, PZ.off - dy * 0.0008));
-      else PZ.k = Math.max(0.15, Math.min(12, PZ.k * Math.exp(dy * 0.0025)));
-      manual = false; const ab = $('#c_auto'); if (ab) ab.classList.add('on'); series.priceScale().applyOptions({ autoScale: true }); setDirty();
+      if (isManual()) {
+        const pr = getPR(), top = pr.top, bot = pr.bot;
+        if (top != null && bot != null) {
+          let c = (top + bot) / 2, hh = (top - bot) / 2;
+          if (e.shiftKey) c -= dy * 0.0008 * (top - bot); else hh *= Math.exp(dy * 0.0025);
+          try { series.priceScale().setVisibleRange({ from: c - hh, to: c + hh }); } catch (x3) {}
+        }
+      } else {
+        if (e.shiftKey) PZ.off = Math.max(-3, Math.min(3, PZ.off - dy * 0.0008));
+        else PZ.k = Math.max(0.15, Math.min(12, PZ.k * Math.exp(dy * 0.0025)));
+        series.priceScale().applyOptions({ autoScale: true });
+      }
+      setDirty();
     }, { capture: true, passive: false });
-    wrap.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('#dtb,.island,.hd,.spw,#c_auto') || e.target === ov) return;
-      if (!manual && PZ.k === 1 && !PZ.off) setManual(true);
-      else if (!manual) { PZ.k = 1; PZ.off = 0; setManual(true); }
-    }, true);
-    $('#c_auto').onclick = () => setManual(false);
-    document.addEventListener('keydown', kdel);
+    wrap.addEventListener('pointerdown', (e) => { touchy = e.pointerType !== 'mouse'; }, true);
+    // right-click menu
+    wrap.addEventListener('contextmenu', (e) => { e.preventDefault(); const { x, y } = localXY(e); openCtx(x, y); });
+    wrap.addEventListener('pointerdown', (e) => { if (!e.target.closest('#ctxm')) closeCtx(); }, true);
+    wrap.addEventListener('pointerdown', (e) => { if (!e.target.closest('#toolpanel,#dt_tools')) { const p = $('#toolpanel'); if (p) p.classList.remove('on'); } }, true);
   }
-  function kdel(e) {
-    if (!$('#ov')) { document.removeEventListener('keydown', kdel); return; }
-    if (/INPUT|TEXTAREA|SELECT/.test((e.target.tagName || ''))) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && dSel != null) { e.preventDefault(); delSel(); }
-    else if (e.key === 'Escape') { dDraft = null; dTool = 'cur'; dSel = null; dGrab = false; setDirty(); setOvMode(); }
+
+  // ---------- right-click menu ----------
+  function closeCtx() { const m = $('#ctxm'); if (m) m.classList.remove('on'); }
+  function openCtx(x, y) {
+    const m = $('#ctxm'); if (!m || !S) return;
+    const nd = (S.draws || []).length, nh = (S.hist || []).length + (S.open ? 1 : 0);
+    const items = [['reset', 'Reset chart view', 1], ['clrd', 'Remove all drawings' + (nd ? ' (' + nd + ')' : ''), nd],
+      ['clrp', 'Remove position drawings', (S.draws || []).some(isPos)], ['mk', S.hideMk ? 'Show buy / sell markers' : 'Hide buy / sell markers', nh]];
+    m.innerHTML = items.map((it) => '<button data-cx="' + it[0] + '"' + (it[2] ? '' : ' class="dis"') + '>' + it[1] + '</button>').join('');
+    m.classList.add('on'); const w = $('#chartwrap'); m.style.left = Math.min(x, w.clientWidth - 220) + 'px'; m.style.top = Math.min(y, w.clientHeight - 170) + 'px';
+    m.querySelectorAll('[data-cx]').forEach((b) => (b.onclick = () => {
+      const k = b.dataset.cx; if (b.classList.contains('dis')) return; closeCtx();
+      if (k === 'reset') resetView();
+      else if (k === 'clrd') { if (confirm('Remove all drawings?')) { S.draws = []; dSel = null; dGrab = false; saveP(); setDirty(); drawTb(); setOvMode(); } }
+      else if (k === 'clrp') { S.draws = (S.draws || []).filter((d) => !isPos(d)); dSel = null; dGrab = false; saveP(); setDirty(); drawTb(); setOvMode(); }
+      else if (k === 'mk') { S.hideMk = !S.hideMk; saveP(); refreshMarkers(); }
+    }));
+  }
+
+  // ---------- quick notes during a session ----------
+  function noteModal() {
+    pause();
+    const list = (S.notes || []).slice(-3).reverse().map((n) => '<div class="muted sm">' + fdate(n.t).slice(5, 16) + ' &middot; ' + esc(n.text) + '</div>').join('');
+    modal('<h3>Quick note</h3><p class="muted sm">Jot down anything that came to mind. It is saved with this session and does not replace your trade journal.</p><textarea id="qn_t" rows="4" placeholder="What did you notice?"></textarea>' +
+      (list ? '<h4>Recent</h4>' + list : '') + '<div class="tbtns"><button class="ghost2" id="qn_c">Cancel</button><button class="buy" id="qn_s">Save</button></div>');
+    setTimeout(() => { const t = $('#qn_t'); if (t) t.focus(); }, 50);
+    $('#qn_c').onclick = closeModal;
+    $('#qn_s').onclick = () => {
+      const t = $('#qn_t').value.trim(); if (!t) { closeModal(); return; }
+      S.notes = S.notes || []; S.notes.push({ t: E.t(S.cur), px: E.close(S.cur), text: t }); saveP(); closeModal(); refreshMarkers(); toast('Note saved');
+    };
+  }
+
+  // ---------- keyboard shortcuts ----------
+  let kbCapture = null;
+  const clickEl = (s) => { const el = $(s); if (el) el.click(); };
+  const ACTIONS = [
+    ['next', 'Next candle', () => clickEl('#c_next')], ['play', 'Play / pause', () => clickEl('#c_play')], ['sesh', 'Next session', () => clickEl('#c_sess')],
+    ['speed', 'Cycle playback speed', () => { speedI = (speedI + 1) % SPEEDS.length; const b = $('#c_speed'); if (b) b.innerHTML = SPEEDS[speedI] + 'x &#9662;'; if (timer) { pause(); play(); } toast('Speed ' + SPEEDS[speedI] + 'x'); }],
+    ['buy', 'Buy', () => clickEl('#b_buy')], ['sell', 'Sell', () => clickEl('#b_sell')], ['close', 'Close trade', () => clickEl('#b_close')], ['stops', 'Edit SL / TP', () => clickEl('#b_edit')],
+    ['end', 'End session', () => clickEl('#c_end')], ['hist', 'Session trades', () => clickEl('#c_hist')], ['ind', 'Indicators', () => clickEl('#c_ind')], ['note', 'Quick note', () => clickEl('#c_note')],
+    ['reset', 'Reset chart view', () => { if (chart) resetView(); }], ['tools', 'Drawing tools list', () => clickEl('#dt_tools')], ['cursor', 'Cursor', () => { if (chart) pickTool('cur'); }],
+    ['magnet', 'Cycle magnet', () => { if (chart) cycleMagnet(); }], ['del', 'Delete selected drawing', () => { if (chart) delSel(); }], ['clrd', 'Remove all drawings', () => { if (chart && (S.draws || []).length && confirm('Remove all drawings?')) { S.draws = []; dSel = null; dGrab = false; saveP(); setDirty(); drawTb(); setOvMode(); } }],
+    ['tfup', 'Next timeframe up', () => { const i = TFS.findIndex((t) => t[0] === S.tf); if (i < TFS.length - 1) setTF(TFS[i + 1][0]); }], ['tfdn', 'Next timeframe down', () => { const i = TFS.findIndex((t) => t[0] === S.tf); if (i > 0) setTF(TFS[i - 1][0]); }],
+  ].concat(TFS.map((t) => ['tf' + t[0], 'Timeframe ' + t[1], () => setTF(t[0])]))
+    .concat([['tabReplay', 'Go to Replay', () => showTab('replay')], ['tabStats', 'Go to Stats', () => showTab('stats')], ['tabPlan', 'Go to Plan', () => showTab('plan')], ['tabSettings', 'Go to Settings', () => showTab('settings')]]);
+  const KDEF = { next: 'ArrowRight', play: 'Space', sesh: 'Shift+ArrowRight', note: 'KeyN', reset: 'KeyR', del: 'Delete' };
+  const keysMap = () => Object.assign({}, KDEF, (P && P.set && P.set.keys) || {});
+  function comboOf(e) {
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return null;
+    return (e.ctrlKey || e.metaKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + e.code;
+  }
+  const comboLabel = (c) => (c ? c.split('+').map((p) => ({ ArrowRight: '\u2192', ArrowLeft: '\u2190', ArrowUp: '\u2191', ArrowDown: '\u2193', Space: 'Space' }[p] || p.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num '))).join(' + ') : 'Not set');
+  function onKey(e) {
+    if (kbCapture) {
+      e.preventDefault(); e.stopPropagation(); const c = comboOf(e); if (!c) return;
+      const id = kbCapture; kbCapture = null; P.set.keys = P.set.keys || {};
+      if (c === 'Escape') { /* cancel */ } else if (c === 'Backspace' || c === 'Delete') P.set.keys[id] = '';
+      else { const km = keysMap(); Object.keys(km).forEach((k) => { if (km[k] === c && k !== id) P.set.keys[k] = ''; }); P.set.keys[id] = c; }
+      saveP(); renderSettings(); return;
+    }
+    if (!P || !P.plan) return;
+    const tg = e.target && e.target.tagName; if (/INPUT|TEXTAREA|SELECT/.test(tg || '')) return;
+    const mo = $('#modal'); if (mo && mo.classList.contains('on')) return;
+    if (e.key === 'Escape') { if (chart) { dDraft = null; dTool = 'cur'; dSel = null; dGrab = false; closeCtx(); const p = $('#toolpanel'); if (p) p.classList.remove('on'); setDirty(); drawTb(); drawFav(); setOvMode(); } return; }
+    if (e.key === 'Enter' && dDraft && dDraft.n === 0) { e.preventDefault(); finishDraft(); return; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && chart && dSel != null) { e.preventDefault(); delSel(); return; }
+    const c = comboOf(e); if (!c) return;
+    const km = keysMap(), a = ACTIONS.find((x) => km[x[0]] === c); if (!a) return;
+    const isTab = /^tab/.test(a[0]); if (!isTab && !(S && tab === 'replay' && chart)) return;
+    e.preventDefault(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); a[2]();
+  }
+  function kbCardHtml() {
+    const km = keysMap();
+    return '<div class="card"><b>Keyboard shortcuts</b><p class="muted sm">For laptops. Click a button, then press the key (or a combination) you want. Backspace clears one. Esc cancels. Shortcuts work on the Replay screen when no pop-up is open.</p>' +
+      ACTIONS.map((a) => '<div class="kbrow"><span>' + a[1] + '</span><button class="kbb' + (kbCapture === a[0] ? ' cap' : '') + '" data-kb="' + a[0] + '">' + (kbCapture === a[0] ? 'Press a key\u2026' : comboLabel(km[a[0]])) + '</button></div>').join('') +
+      '<button class="btn ghost" id="kb_reset" style="margin-top:12px">Reset shortcuts to default</button></div>';
+  }
+  function bindKbUI() {
+    document.querySelectorAll('[data-kb]').forEach((b) => (b.onclick = () => { kbCapture = b.dataset.kb; renderSettings(); }));
+    const r = $('#kb_reset'); if (r) r.onclick = () => { P.set.keys = {}; kbCapture = null; saveP(); renderSettings(); };
   }
 
   // ---------- trade markers + session history ----------
@@ -634,6 +1614,7 @@
     const o = S.open;
     if (o && bt(o.t0) >= first) ms.push({ time: bt(o.t0), position: o.dir > 0 ? 'belowBar' : 'aboveBar', color: '#e6c14b', shape: o.dir > 0 ? 'arrowUp' : 'arrowDown', text: o.dir > 0 ? 'Buy' : 'Sell' });
     ms.sort((a, b) => a.time - b.time);
+    if (S.hideMk) ms.length = 0;
     try { mkApi.setMarkers(ms); } catch (e) {}
     setDirty();
   }
@@ -753,28 +1734,31 @@
 
   function dayRoll() {
     const dk = Math.floor(E.t(S.cur) / 1440);
-    if (dk !== S.dayKey) { S.dayKey = dk; S.dayStartBal = S.balance; S.dayTrades = 0; }
+    if (dk !== S.dayKey) { S.dayKey = dk; S.dayStartBal = S.balance; S.dayTrades = 0; acctDay(); }
   }
-  function sync(crossed, stepped) {
+  function setDataKeep() { const v = captureView(); series.setData(HIST); if (v) applyView(v); }
+  function sync(crossed, stepped, trimmed) {
     if (!stepped || !series) return;
-    if (crossed || stepped > 1) series.setData(HIST); else series.update(S.run);
+    if (trimmed) setDataKeep();
     updateInd();
   }
   function advance(n) {
-    let crossed = false, stepped = 0;
+    let crossed = false, stepped = 0, trimmed = false;
     for (let k = 0; k < n; k++) {
       if (S.cur >= E.n() - 1) { pause(); toast('End of loaded data'); break; }
-      S.cur++; stepped++;
+      S.cur++; stepped++; applyEnv();
       S.run = E.mergeBar(S.run, S.tf, S.cur);
       const last = HIST[HIST.length - 1];
-      if (!last || last.time !== S.run.time) { HIST.push(S.run); crossed = true; if (HIST.length > 800) HIST.shift(); } else HIST[HIST.length - 1] = S.run;
+      if (!last || last.time !== S.run.time) { HIST.push(S.run); crossed = true; if (HIST.length > 3000) { HIST.splice(0, 500); trimmed = true; } } else HIST[HIST.length - 1] = S.run;
+      if (series && !trimmed) series.update(S.run);
       dayRoll();
       if (S.open) {
         const r = E.stepTrade(S.open, S.cur);
-        if (r) { sync(crossed, stepped); finishTrade(r.price, E.t(S.cur), r.reason); return; }
+        if (r) { sync(crossed, stepped, trimmed); finishTrade(r.price, E.t(S.cur), r.reason); return; }
       }
+      { const f = acctForce(); if (f) { sync(crossed, stepped, trimmed); finishTrade(E.close(S.cur), E.t(S.cur), f); return; } }
     }
-    sync(crossed, stepped); refreshHud();
+    sync(crossed, stepped, trimmed); refreshHud(); flushAlerts();
   }
   function nextCandle() {
     const tf = S.tf, b = Math.floor(E.t(S.cur) / tf);
@@ -793,12 +1777,12 @@
   }
   function play() {
     if (timer) return;
-    const b = $('#c_play'); b.innerHTML = '&#10074;&#10074;'; b.classList.add('on');
-    timer = setInterval(() => advance(SPEEDS[speedI]), 300);
+    const b = $('#c_play'); b.innerHTML = UI.pause; b.classList.add('on');
+    timer = setInterval(() => { advance(SPEEDS[speedI]); discTick(); }, 300);
   }
   function pause() {
     if (timer) { clearInterval(timer); timer = null; }
-    const b = $('#c_play'); if (b) { b.innerHTML = '&#9654;'; b.classList.remove('on'); }
+    const b = $('#c_play'); if (b) { b.innerHTML = UI.play; b.classList.remove('on'); }
     if (S) saveP();
   }
   function equity() { return S.balance + (S.open ? E.floating(S.open, E.close(S.cur)) : 0); }
@@ -806,23 +1790,24 @@
     if (!$('#h_time')) return;
     $('#h_time').textContent = fdate(E.t(S.cur)).slice(5).replace(' UTC', ''); $('#h_sess').textContent = sessName(E.t(S.cur));
     const cn = $('#h_cnt'); if (cn) cn.textContent = S.dayTrades + '/' + P.plan.risk.maxTrades;
-    const sp = $('#h_pnl'); if (sp) { const v = equity() - S.startBal; sp.textContent = (S.pending && !S.pending.check) ? '\u2022\u2022\u2022\u2022' : (v >= 0 ? '+' : '') + fmt(v); sp.className = (S.pending && !S.pending.check) ? '' : (v >= 0 ? 'up' : 'dn'); }
-    const masked = S.pending && !S.pending.check;
-    $('#h_bal').textContent = masked ? '\u2022\u2022\u2022\u2022' : fmt(S.balance);
-    const eq = equity(); const el = $('#h_eq'); el.textContent = masked ? '\u2022\u2022\u2022\u2022' : fmt(eq); el.className = masked ? '' : (eq >= S.balance ? 'up' : 'dn');
+    const masked = S.pending && !S.pending.check, DOT = '\u2022\u2022\u2022\u2022';
+    const put = (id, txt, v) => { const el = $('#' + id); if (!el) return; el.textContent = txt; el.className = v == null || Math.abs(v) < 0.005 ? '' : (v > 0 ? 'up' : 'dn'); };
+    const eq = equity(), sg = (v) => (v >= 0 ? '+' : '') + fmt(v), hh = dayHist(), rs = avgROf(hh.s), rd = avgROf(hh.d);
+    const rt = (v) => (v == null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(2) + 'R');
+    $('#h_bal').textContent = masked ? DOT : fmt(S.balance);
+    put('h_eq', masked ? DOT : fmt(eq), masked ? null : eq - S.balance);
+    put('h_pnl', masked ? DOT : sg(eq - S.startBal), masked ? null : eq - S.startBal);
+    put('h_dpnl', masked ? DOT : sg(eq - S.dayStartBal), masked ? null : eq - S.dayStartBal);
+    put('h_wr', wrOf(hh.s)); put('h_dwr', wrOf(hh.d));
+    put('h_rr', rt(rs), rs); put('h_drr', rt(rd), rd);
+    acctChip();
     if (S.open) updateOpenPanel();
   }
 
   // ---------- trade bar / lines ----------
   let lineObjs = {}, trackId = 0, drag = null;
   const isSetup = (t) => S.cur <= (t.i0 == null ? -1 : t.i0);
-  let manual = false;
-  function refit() { if (manual) return; try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
-  function setManual(on) {
-    manual = on; const a = $('#c_auto'); if (a) a.classList.toggle('on', !on);
-    try { series.priceScale().applyOptions({ autoScale: !on }); } catch (e) {}
-    if (!on) { PZ.k = 1; PZ.off = 0; setDirty(); }
-  }
+  function refit() { if (man) return; try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
 
   function drawLines() {
     if (!series) return;
@@ -922,7 +1907,7 @@
       $('#b_sell').onclick = () => quickTrade(-1); $('#b_buy').onclick = () => quickTrade(1);
     } else {
       tb.innerHTML = '<div class="dk open"><div class="oi"><div id="o_dir"></div><div id="o_info" class="muted"></div></div><div id="o_pnl" class="big"></div><button class="ghost2" id="b_edit">SL/TP</button><button class="close" id="b_close">Close</button></div>';
-      $('#b_close').onclick = () => { pause(); finishTrade(E.close(S.cur), E.t(S.cur), 'MANUAL'); };
+      $('#b_close').onclick = () => { pause(); const cg = closeGate(AC()); if (cg) { toast(cg); return; } finishTrade(E.close(S.cur), E.t(S.cur), 'MANUAL'); };
       $('#b_edit').onclick = editStops; updateOpenPanel();
     }
   }
@@ -942,13 +1927,17 @@
   function quickTrade(dir) {
     pause();
     if (S.open || S.pending) return;
+    const ac = AC(), gate = openGate(ac, dir); if (gate) { toast(gate); return; }
+    if (ac && ac.cond && ac.cond.requote && Math.random() < (newsAt(E.t(S.cur), 5, 'all') ? 0.35 : 0.04)) { toast('Requote: price moved. Try again.'); return; }
+    let rp = P.plan.risk.pct; if (ac && ac.cfg && ac.cfg.maxRisk && rp > ac.cfg.maxRisk) { rp = ac.cfg.maxRisk; toast('Risk capped at ' + rp + '% by the account rules'); }
+    const slipIn = ac && ac.cond && ac.cond.slip ? slipAmt(E.t(S.cur), ac.cond) : 0;
     const plan = P.plan, px = E.close(S.cur), dist = defaultDist();
     const sl = +(px - dir * dist).toFixed(2), tp = +(px + dir * (E.SPREAD / 2 + (dist + E.SPREAD / 2) * Math.max(plan.risk.minRR, 1))).toFixed(2);
     const over = S.dayTrades >= plan.risk.maxTrades, breach = (S.dayStartBal - S.balance) >= S.dayStartBal * plan.risk.dailyLoss / 100;
-    const tr = E.openTrade({ dir, price: px, sl, tp, balance: S.balance, riskPct: plan.risk.pct, t: E.t(S.cur), check: null, note: '', ctx: { overTrades: over, dailyBreach: breach } });
+    const tr = E.openTrade({ dir, price: px, sl, tp, balance: S.balance, riskPct: rp, slip: slipIn, cond: tradeCond(ac), t: E.t(S.cur), check: null, note: '', ctx: { overTrades: over, dailyBreach: breach } });
     if (!tr.units) { toast('Position size is zero'); return; }
     tr.startBal = S.balance; tr.i0 = S.cur;
-    S.open = tr; S.dayTrades++; S.trades++;
+    S.open = tr; S.dayTrades++; S.trades++; if (ac) ac.dTr = S.dayTrades;
     drawTradebar(); drawLines(); refreshHud(); saveP(); refreshMarkers();
     if (breach) toast('Daily loss limit reached. Your plan says stop for the day.');
     else if (over) toast('Trade ' + S.dayTrades + ' today. Your limit is ' + plan.risk.maxTrades + '.');
@@ -971,11 +1960,14 @@
   // ---------- trade end: checklist first, then result + self review ----------
   function finishTrade(price, tmin, reason) {
     pause();
-    const t = S.open; E.closeTrade(t, price, tmin, reason);
-    S.balance += t.pnl; S.open = null; recordHist(t, null);
+    const t = S.open, ac = AC(); let sl = 0;
+    if (ac && ac.cond && ac.cond.slip) { sl = slipAmt(tmin, ac.cond); if (reason === 'SL') sl = Math.abs(sl); else if (reason === 'TP') sl = 0; }
+    E.closeTrade(t, price, tmin, reason, sl);
+    S.balance += t.pnl; S.open = null; recordHist(t, null); acctClose(t);
     if (S.jmode === 'end') {
       saveP(); drawTradebar(); drawLines(); refreshHud();
-      toast({ SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed' }[reason] + ': ' + (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) + ' (' + t.r.toFixed(2) + 'R)');
+      toast(({ SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed', BREACH: 'Closed by account rules', WEEKEND: 'Closed for the weekend', STOPOUT: 'Margin stop-out' }[reason]) + ': ' + (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) + ' (' + t.r.toFixed(2) + 'R)');
+      flushAlerts();
       return;
     }
     S.pending = t; saveP();
@@ -996,7 +1988,7 @@
     };
   }
   function resultStep(t) {
-    const rsn = { SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed by you' }[t.reason];
+    const rsn = ({ SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed by you', BREACH: 'Closed by account rules', WEEKEND: 'Closed for the weekend', STOPOUT: 'Margin stop-out' }[t.reason]);
     modal('<h3>' + rsn + '</h3><div class="resbig ' + (t.pnl >= 0 ? 'up' : 'dn') + '">' + fmt(t.pnl) + ' <span class="muted">(' + t.r.toFixed(2) + 'R)</span></div>' +
       '<h4>Be honest. Did you follow your plan on this trade?</h4><div class="seg" id="rv_seg"><button data-f="yes">Yes, fully</button><button data-f="partly">Partly</button><button data-f="no">No</button></div>' +
       '<label>What did you do well? What would you change? (required)</label><textarea id="rv_note" rows="3" placeholder="Be specific. Was it the setup, the entry, the stop, your emotions?"></textarea>' +
@@ -1029,7 +2021,7 @@
       '<div class=\"srow hon\"><span><b>Honesty</b> &middot; ' + hl + '</span><b class=\"' + (sc.honesty === 2 ? 'up' : sc.honesty === 0 ? 'dn' : '') + '\">' + sc.honesty + '/2</b></div>' +
       '<p class=\"vt\">' + vtxt + '</p><div class=\"xpline\">+' + gain + ' XP &middot; Level ' + lvAfter + (lvAfter > lvBefore ? ' &#127881; LEVEL UP' : '') + ' &middot; Clean streak ' + P.streak + '</div>' +
       '<button class=\"btn big\" id=\"rs_ok\">Continue</button>', 'tall nodismiss');
-    $('#rs_ok').onclick = () => { closeModal(); drawTradebar(); const risk = (S.dayStartBal - S.balance) >= S.dayStartBal * P.plan.risk.dailyLoss / 100; if (risk) toast('Daily loss limit hit. Plan says stop for today.'); };
+    $('#rs_ok').onclick = () => { closeModal(); setTimeout(flushAlerts, 60); drawTradebar(); const risk = (S.dayStartBal - S.balance) >= S.dayStartBal * P.plan.risk.dailyLoss / 100; if (risk) toast('Daily loss limit hit. Plan says stop for today.'); };
   }
 
   function endSession() {
@@ -1038,7 +2030,10 @@
     const pnl = S.balance - S.startBal;
     modal('<h3>End session?</h3><p>Result: <b class="' + (pnl >= 0 ? 'up' : 'dn') + '">' + fmt(pnl) + '</b> over ' + S.trades + ' trades.</p><div class="tbtns"><button class="ghost2" id="en_no">Keep going</button><button class="sell" id="en_yes">End</button></div>');
     $('#en_no').onclick = closeModal;
-    $('#en_yes').onclick = () => {
+    $('#en_yes').onclick = runEnd;
+  }
+  function runEnd() {
+    {
       closeModal();
       const st = sessStats(), prev = (P.sessLog || []).length ? P.sessLog[P.sessLog.length - 1].st : null;
       const fin = (notes) => statsModal(st, prev, () => {
@@ -1046,7 +2041,7 @@
         P.sessionsDone++; P.session = null; S = null; saveP(); closeModal(); showTab('replay');
       });
       if (S.jmode === 'end') reflectModal(fin); else fin(null);
-    };
+    }
   }
 
   // ---------- stats ----------
@@ -1104,13 +2099,13 @@
       '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
       '<div class="card"><b>Backup</b><p class="muted sm">Plan, XP, journal and pictures live on this device. Save a file so a phone change or cleared Safari data cannot wipe them. Updating the app never touches them.</p>' +
       '<button class="btn" id="p_export">Save backup</button> <button class="btn ghost" id="p_import">Restore backup</button><input type="file" id="p_ifile" accept=".json,application/json" hidden></div>' +
-      '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
+      kbCardHtml() + '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
     latestBuild().then((lb) => { const el = $('#v_latest'); if (!el) return; el.innerHTML = !lb ? 'Latest on server: could not check (offline?)' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; });
     $('#v_check').onclick = () => { $('#v_latest').textContent = 'Latest on server: checking\u2026'; latestBuild().then((lb) => { $('#v_latest').innerHTML = !lb ? 'Could not check' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; }); };
     $('#v_force').onclick = forceRefresh;
     $('#st_tf').onchange = () => { P.set.tf = +$('#st_tf').value; saveP(); toast('Saved'); };
     $('#st_sp').onchange = () => { P.set.speed = +$('#st_sp').value; speedI = P.set.speed; saveP(); toast('Saved'); };
-    $('#st_ind').onclick = openInd;
+    $('#st_ind').onclick = openInd; bindKbUI();
     $('#p_addimg').onclick = () => $('#p_imgfile').click();
     $('#p_imgfile').onchange = async (e) => {
       const a = loadImgs();
@@ -1137,5 +2132,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
   window.addEventListener('pagehide', () => { if (P) saveP(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  document.addEventListener('keydown', onKey);
+  window.addEventListener('resize', () => { if ($('#chartwrap')) { placeMovable('isl'); placeMovable('fav'); } });
   boot();
 })();
