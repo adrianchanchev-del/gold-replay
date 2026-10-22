@@ -254,3 +254,11 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 .stats4 .kv b,.stats4 #h_cnt{font-size:clamp(9px,17cqw,17px);font-variant-numeric:tabular-nums;overflow:visible}
 .stats4.acs.s5{grid-template-columns:repeat(3,1fr)}
 .stats4.acs.s5 .kv b{font-size:clamp(9px,15cqw,17px)}
+
+/* v0.18: use the full screen height */
+.island{bottom:10px}
+.dock{padding-bottom:max(calc(env(safe-area-inset-bottom) - 14px),2px)}
+.nav{padding-bottom:max(calc(env(safe-area-inset-bottom) - 14px),2px)}
+.dk{padding:6px 10px 4px}.dk button{height:38px}
+.nav button{padding:6px 0 0}
+#c_cross{font-size:16px;padding:0 10px}#c_cross.on{color:#e6c14b}

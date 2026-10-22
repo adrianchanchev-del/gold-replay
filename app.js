@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.17.2', BUILD = 'gr-v22';
+  const APP_VERSION = '0.18.0', BUILD = 'gr-v23';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -688,7 +688,7 @@
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
       '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
       '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><div id="favis" class="favis"></div><div id="toolpanel" class="toolpanel"></div><div id="ctxm" class="ctxm"></div>' +
-      '<div class="island"><div class="grip" data-grip="isl" title="Drag to move (double-click to reset)">' + UI.grip + '</div><div class="fxbar"><button id="c_play" class="pl">' + UI.play + '</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_end" class="endb">End</button></div></div></div></div>';
+      '<div class="island"><div class="grip" data-grip="isl" title="Drag to move (double-click to reset)">' + UI.grip + '</div><div class="fxbar"><button id="c_play" class="pl">' + UI.play + '</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_cross" title="Crosshair">&#8982;</button><button id="c_end" class="endb">End</button></div></div></div></div>';
     if (!S.vid) S.vid = Date.now();
     mountChart(); loadTF(savedView && savedView.key === S.vid ? savedView : null); drawTfBits(); drawTb(); drawFav(); bindDraw(); placeMovable('isl'); bindGrip($('.island .grip'), $('.island'), 'isl');
     $('#tf_menu').onclick = (e) => { e.stopPropagation(); $('#tf_panel').classList.toggle('on'); };
@@ -703,6 +703,8 @@
     $('#chartwrap').addEventListener('pointerdown', (e) => { if (!e.target.closest('.spw')) $('#c_menu').classList.remove('on'); });
     $('#view').addEventListener('pointerdown', (e) => { if (!e.target.closest('.tfmw')) { const p = $('#tf_panel'); if (p) p.classList.remove('on'); } });
     $('#c_ind').onclick = () => { pause(); openInd(); };
+    const crossBtn = $('#c_cross');
+    if (crossBtn) { crossBtn.classList.toggle('on', !!P.set.cross); crossBtn.onclick = () => { setCross(!P.set.cross); crossBtn.classList.toggle('on', !!P.set.cross); }; }
     $('#c_hist').onclick = () => { pause(); openHistory(); };
     $('#c_note').onclick = noteModal;
     $('#c_end').onclick = endSession;
@@ -719,7 +721,7 @@
       grid: { vertLines: { color: '#1b2030' }, horzLines: { color: '#1b2030' } },
       localization: { priceFormatter: (p) => p.toFixed(2) },
       timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 6, borderColor: '#2a2e39', barSpacing: 9, minBarSpacing: 3 },
-      rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.14 } }, crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.08, bottom: 0.14 } }, crosshair: { mode: (P.set && P.set.cross) ? 0 : 2 },
     });
     PZ.k = 1; PZ.off = 0; man = false;
     series = chart.addSeries(LW.CandlestickSeries, {
@@ -2104,6 +2106,7 @@
   async function latestBuild() {
     try { const t = await (await fetch('sw.js?x=' + Date.now(), { cache: 'no-store' })).text(); const m = t.match(/const V='([^']+)'/); return m ? m[1] : null; } catch (e) { return null; }
   }
+  function setCross(on) { P.set.cross = !!on; saveP(); try { chart.applyOptions({ crosshair: { mode: on ? 0 : 2 } }); } catch (e) {} }
   async function forceRefresh() {
     try { const rs = await navigator.serviceWorker.getRegistrations(); for (const r of rs) await r.unregister(); } catch (e) {}
     try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
@@ -2119,7 +2122,7 @@
       '<div class="card"><b>App version</b><div class="verbig">v' + APP_VERSION + '</div><div class="muted sm">Build ' + BUILD + '</div><div id="v_latest" class="muted sm" style="margin-top:6px">Latest on server: checking&hellip;</div>' +
       '<div class="tbtns"><button class="ghost2" id="v_check">Check for update</button><button class="close" id="v_force">Force refresh</button></div></div>' +
       '<div class="card"><b>Data</b><div class="muted sm" style="margin-top:4px">Spot gold XAUUSD (Dukascopy bid), 1-minute, prices to 2 decimals, UTC.<br>' + fdate(ft) + ' to ' + fdate(lt) + '<br>' + nd + ' trading days. More days are added automatically.</div></div>' +
-      '<div class="card"><b>Replay defaults</b><label>Starting chart timeframe</label><select id="st_tf">' + tfOpts + '</select><label>Starting playback speed</label><select id="st_sp">' + spOpts + '</select>' +
+      '<div class="card"><b>Replay defaults</b><label>Starting chart timeframe</label><select id="st_tf">' + tfOpts + '</select><label>Chart crosshair (follows your finger)</label><select id="st_cr"><option value="0"' + (P.set.cross ? '' : ' selected') + '>Off</option><option value="1"' + (P.set.cross ? ' selected' : '') + '>On</option></select><label>Starting playback speed</label><select id="st_sp">' + spOpts + '</select>' +
       '<button class="btn ghost" id="st_ind" style="margin-top:12px">Indicators&hellip;</button></div>' +
       '<div class="card"><b>Plan pictures</b><p class="muted sm">Screenshots or photos of your written plan or setups. Kept on this device.</p><div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
       '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
@@ -2130,6 +2133,7 @@
     $('#v_check').onclick = () => { $('#v_latest').textContent = 'Latest on server: checking\u2026'; latestBuild().then((lb) => { $('#v_latest').innerHTML = !lb ? 'Could not check' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; }); };
     $('#v_force').onclick = forceRefresh;
     $('#st_tf').onchange = () => { P.set.tf = +$('#st_tf').value; saveP(); toast('Saved'); };
+    $('#st_cr').onchange = () => { P.set.cross = $('#st_cr').value === '1'; saveP(); toast('Saved'); };
     $('#st_sp').onchange = () => { P.set.speed = +$('#st_sp').value; speedI = P.set.speed; saveP(); toast('Saved'); };
     $('#st_ind').onclick = openInd; bindKbUI();
     $('#p_addimg').onclick = () => $('#p_imgfile').click();
