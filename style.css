@@ -274,3 +274,7 @@ html,body{position:fixed;top:0;left:0;right:0;bottom:0;height:auto;min-height:-w
 .dock{padding-bottom:0!important}
 .nav{padding-bottom:env(safe-area-inset-bottom)!important;min-height:calc(50px + env(safe-area-inset-bottom))}
 .nav button{padding:8px 0 calc(env(safe-area-inset-bottom) * .45)}
+
+/* v0.20: adjustable bottom edge */
+#app{bottom:calc(-1 * var(--bx,0px))!important}
+.nav{padding-bottom:calc(env(safe-area-inset-bottom) + var(--bx,0px))!important}

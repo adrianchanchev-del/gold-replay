@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.19.1', BUILD = 'gr-v26';
+  const APP_VERSION = '0.20.0', BUILD = 'gr-v27';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -2123,6 +2123,7 @@
     el.addEventListener('touchend', clear, { passive: true, capture: true });
     el.addEventListener('touchcancel', clear, { passive: true, capture: true });
   }
+  function applyBx() { document.documentElement.style.setProperty('--bx', ((P && P.set && P.set.bx) || 0) + 'px'); }
   function setCross(on) { P.set.cross = !!on; saveP(); try { chart.applyOptions({ crosshair: { mode: on ? 0 : 2 } }); } catch (e) {} }
   async function forceRefresh() {
     try { const rs = await navigator.serviceWorker.getRegistrations(); for (const r of rs) await r.unregister(); } catch (e) {}
@@ -2139,7 +2140,7 @@
       '<div class="card"><b>App version</b><div class="verbig">v' + APP_VERSION + '</div><div class="muted sm">Build ' + BUILD + '</div><div id="v_latest" class="muted sm" style="margin-top:6px">Latest on server: checking&hellip;</div>' +
       '<div class="tbtns"><button class="ghost2" id="v_check">Check for update</button><button class="close" id="v_force">Force refresh</button></div></div>' +
       '<div class="card"><b>Data</b><div class="muted sm" style="margin-top:4px">Spot gold XAUUSD (Dukascopy bid), 1-minute, prices to 2 decimals, UTC.<br>' + fdate(ft) + ' to ' + fdate(lt) + '<br>' + nd + ' trading days. More days are added automatically.</div></div>' +
-      '<div class="card"><b>Replay defaults</b><label>Starting chart timeframe</label><select id="st_tf">' + tfOpts + '</select><label>Chart crosshair (follows your finger)</label><select id="st_cr"><option value="0"' + (P.set.cross ? '' : ' selected') + '>Off</option><option value="1"' + (P.set.cross ? ' selected' : '') + '>On</option></select><label>Starting playback speed</label><select id="st_sp">' + spOpts + '</select>' +
+      '<div class="card"><b>Replay defaults</b><label>Starting chart timeframe</label><select id="st_tf">' + tfOpts + '</select><label>Chart crosshair (follows your finger)</label><select id="st_cr"><option value="0"' + (P.set.cross ? '' : ' selected') + '>Off</option><option value="1"' + (P.set.cross ? ' selected' : '') + '>On</option></select><label>Bottom edge (Home Screen app: raise until the gap is filled)</label><select id="st_bx">' + [0, 10, 20, 30, 40].map((v) => '<option value="' + v + '"' + ((P.set.bx || 0) === v ? ' selected' : '') + '>' + (v ? '+' + v + ' px' : 'Default') + '</option>').join('') + '</select><label>Starting playback speed</label><select id="st_sp">' + spOpts + '</select>' +
       '<button class="btn ghost" id="st_ind" style="margin-top:12px">Indicators&hellip;</button></div>' +
       '<div class="card"><b>Plan pictures</b><p class="muted sm">Screenshots or photos of your written plan or setups. Kept on this device.</p><div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
       '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
@@ -2149,6 +2150,7 @@
     $('#v_force').onclick = forceRefresh;
     $('#st_tf').onchange = () => { P.set.tf = +$('#st_tf').value; saveP(); toast('Saved'); };
     $('#st_cr').onchange = () => { P.set.cross = $('#st_cr').value === '1'; saveP(); toast('Saved'); };
+    $('#st_bx').onchange = () => { P.set.bx = +$('#st_bx').value; saveP(); applyBx(); toast('Saved'); };
     $('#st_sp').onchange = () => { P.set.speed = +$('#st_sp').value; speedI = P.set.speed; saveP(); toast('Saved'); };
     $('#st_ind').onclick = openInd; bindKbUI();
     $('#p_addimg').onclick = () => $('#p_imgfile').click();
@@ -2174,6 +2176,7 @@
   window.addEventListener('scroll', () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
   window.addEventListener('pagehide', () => { if (P) saveP(); });
+  applyBx();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   document.addEventListener('keydown', onKey);
   window.addEventListener('resize', () => { if ($('#chartwrap')) { placeMovable('isl'); placeMovable('fav'); } });
