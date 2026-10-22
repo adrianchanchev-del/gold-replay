@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.18.0', BUILD = 'gr-v23';
+  const APP_VERSION = '0.18.1', BUILD = 'gr-v24';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -118,7 +118,7 @@
     const prog = '<div class="wprog">' + STEPS.map((s, i) => '<span class="' + (i === wStep ? 'on' : i < wStep ? 'done' : '') + '">' + (i + 1) + '</span>').join('') + '</div>';
     let body = '';
     if (wStep === 0) {
-      body = (!W._editing && !P.plan && window.Sync ? window.Sync.cardHtml(true) : '') + (!W._editing && !P.plan ? '<div class="card"><b>Already set up before?</b><div class="muted sm">The Home Screen app does not share storage with Safari. Restore a backup file here.</div><button class="btn ghost" id="w_restore" style="margin-top:8px">Restore backup</button><input type="file" id="w_rfile" accept=".json,application/json" hidden></div>' : '') + '<h2>What are you trading?</h2><p class="muted">Gold only for now, built from 1-minute data (Sep 2023 to now).</p>' +
+      body = (!W._editing && !P.plan && window.Sync ? window.Sync.cardHtml(true) : '') + '' + '<h2>What are you trading?</h2><p class="muted">Gold only for now, built from 1-minute data (Sep 2023 to now).</p>' +
         '<label>Your name or trader tag</label><input id="w_name" value="' + esc(W.name) + '" placeholder="e.g. Andi">' +
         '<label>Market</label><input value="XAUUSD (gold)" disabled>' +
         '<label>Timeframes you use (tap to toggle)</label><div class="chips">' +
@@ -284,11 +284,11 @@
     if (!curAcct() && (P.accts || []).length) { const L = P.accts, pick = L.slice().reverse().find((x) => x.status === 'active') || L[0]; P.curAcct = pick.id; saveP(); }
     const a0 = curAcct();
     const d0 = fmtDay(days[0]), d1 = fmtDay(days[days.length - 1]);
-    $('#view').innerHTML = '<div class="page"><h2>New session</h2><p class="muted">Real spot gold (XAUUSD) 1-minute data. The future is hidden and revealed as you step forward.</p>' +
+    $('#view').innerHTML = '<div class="page"><h2>New session</h2>' +
       '<div class="card" id="ac_box"></div><div class="card"><label>Day</label><select id="s_day">' + days.slice().reverse().map((d) => '<option value="' + d + '"' + (d === selDay ? ' selected' : '') + '>' + fmtDay(d) + '</option>').join('') + '</select>' +
       '<label>Session (UTC start time)</label><div class="chips" id="s_sess"></div>' +
       '<button class="btn big" id="s_go">Begin session</button><button class="btn ghost big" id="s_rand">Random day and session</button>' +
-      '<p class="muted sm">Data: ' + d0.slice(5) + ' to ' + d1.slice(5) + ' &middot; ' + days.length + ' trading days &middot; more days are added automatically.</p></div>' +
+      '</div>' +
       '<div class="card"><b>Your risk rules</b><div class="muted">' + P.plan.risk.pct + '% per trade &middot; min RR ' + P.plan.risk.minRR + ' &middot; ' + P.plan.risk.maxTrades + ' trades/day &middot; ' + P.plan.risk.dailyLoss + '% daily loss limit</div></div></div>';
     const drawSess = () => {
       if (startIdx(selDay, SESSIONS[selSess][1]) < 0) selSess = SESSIONS.findIndex((s) => startIdx(selDay, s[1]) >= 0);
@@ -627,8 +627,7 @@
       const m = acctM(a0, a0.bal);
       h += acctStatsHtml(a0) + '<div class="srow"><span>' + (a0.type === 'live' ? 'Account' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
         (m.ph ? pbar(m.cp / m.target) + '<div class="muted sm">Profit ' + fmt(m.cp) + ' of ' + fmt(m.target) + ' target</div>' : '') +
-        '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt</button>' : '') + '<button class="ghost2" id="ac_del">Delete</button></div>' +
-        '<p class="muted sm">Sessions on this account continue from its balance. You can only move forward in time.</p>';
+        '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt</button>' : '') + '<button class="ghost2" id="ac_del">Delete</button></div>' ;
     }
     box.innerHTML = h;
     box.querySelectorAll('[data-ac]').forEach((el) => (el.onclick = () => { P.curAcct = el.dataset.ac || null; saveP(); renderStart(); }));
@@ -2126,8 +2125,6 @@
       '<button class="btn ghost" id="st_ind" style="margin-top:12px">Indicators&hellip;</button></div>' +
       '<div class="card"><b>Plan pictures</b><p class="muted sm">Screenshots or photos of your written plan or setups. Kept on this device.</p><div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
       '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
-      '<div class="card"><b>Backup</b><p class="muted sm">Plan, XP, journal and pictures live on this device. Save a file so a phone change or cleared Safari data cannot wipe them. Updating the app never touches them.</p>' +
-      '<button class="btn" id="p_export">Save backup</button> <button class="btn ghost" id="p_import">Restore backup</button><input type="file" id="p_ifile" accept=".json,application/json" hidden></div>' +
       (window.Sync ? window.Sync.cardHtml() : '') + kbCardHtml() + '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
     latestBuild().then((lb) => { const el = $('#v_latest'); if (!el) return; el.innerHTML = !lb ? 'Latest on server: could not check (offline?)' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; });
     $('#v_check').onclick = () => { $('#v_latest').textContent = 'Latest on server: checking\u2026'; latestBuild().then((lb) => { $('#v_latest').innerHTML = !lb ? 'Could not check' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; }); };
@@ -2146,10 +2143,7 @@
     document.querySelectorAll('[data-rmimg]').forEach((b) => (b.onclick = () => { const a = loadImgs(); a.splice(+b.dataset.rmimg, 1); saveImgs(a); renderSettings(); }));
     document.querySelectorAll('[data-view]').forEach((im) => (im.onclick = () => showImg(+im.dataset.view)));
     if (window.Sync) window.Sync.bind($);
-    $('#p_export').onclick = doExport;
-    $('#p_import').onclick = () => $('#p_ifile').click();
-    $('#p_ifile').onchange = (e) => e.target.files[0] && doImport(e.target.files[0]);
-    $('#p_reset').onclick = () => { modal('<h3>Reset everything?</h3><p>Deletes your plan, XP and journal on this device. Save a backup first if unsure.</p><div class="tbtns"><button class="ghost2" id="rs_n">Cancel</button><button class="sell" id="rs_y">Delete</button></div>'); $('#rs_n').onclick = closeModal; $('#rs_y').onclick = () => { localStorage.removeItem(KEY); localStorage.removeItem(IKEY); location.reload(); }; };
+    $('#p_reset').onclick = () => { modal('<h3>Reset everything?</h3><p>Deletes your plan, XP and journal on this device.</p><div class="tbtns"><button class="ghost2" id="rs_n">Cancel</button><button class="sell" id="rs_y">Delete</button></div>'); $('#rs_n').onclick = closeModal; $('#rs_y').onclick = () => { localStorage.removeItem(KEY); localStorage.removeItem(IKEY); location.reload(); }; };
   }
   function showImg(i) {
     const a = loadImgs(); if (!a[i]) return;
