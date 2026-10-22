@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.18.1', BUILD = 'gr-v24';
+  const APP_VERSION = '0.19.0', BUILD = 'gr-v25';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -702,6 +702,7 @@
     $('#chartwrap').addEventListener('pointerdown', (e) => { if (!e.target.closest('.spw')) $('#c_menu').classList.remove('on'); });
     $('#view').addEventListener('pointerdown', (e) => { if (!e.target.closest('.tfmw')) { const p = $('#tf_panel'); if (p) p.classList.remove('on'); } });
     $('#c_ind').onclick = () => { pause(); openInd(); };
+    wireCross();
     const crossBtn = $('#c_cross');
     if (crossBtn) { crossBtn.classList.toggle('on', !!P.set.cross); crossBtn.onclick = () => { setCross(!P.set.cross); crossBtn.classList.toggle('on', !!P.set.cross); }; }
     $('#c_hist').onclick = () => { pause(); openHistory(); };
@@ -2104,6 +2105,23 @@
   }
   async function latestBuild() {
     try { const t = await (await fetch('sw.js?x=' + Date.now(), { cache: 'no-store' })).text(); const m = t.match(/const V='([^']+)'/); return m ? m[1] : null; } catch (e) { return null; }
+  }
+  let crossWired = null;
+  function wireCross() {
+    const el = $('#chart'); if (!el || crossWired === el) return; crossWired = el;
+    const put = (e) => {
+      if (!P.set.cross || !e.touches || !e.touches[0]) return;
+      const r = el.getBoundingClientRect(), x = e.touches[0].clientX - r.left, y = e.touches[0].clientY - r.top;
+      try {
+        const pr = series.coordinateToPrice(y), tm = chart.timeScale().coordinateToTime(x);
+        if (pr != null && tm != null) chart.setCrosshairPosition(pr, tm, series);
+      } catch (x2) {}
+    };
+    const clear = () => { try { chart.clearCrosshairPosition(); } catch (x2) {} };
+    el.addEventListener('touchstart', put, { passive: true, capture: true });
+    el.addEventListener('touchmove', put, { passive: true, capture: true });
+    el.addEventListener('touchend', clear, { passive: true, capture: true });
+    el.addEventListener('touchcancel', clear, { passive: true, capture: true });
   }
   function setCross(on) { P.set.cross = !!on; saveP(); try { chart.applyOptions({ crosshair: { mode: on ? 0 : 2 } }); } catch (e) {} }
   async function forceRefresh() {

@@ -262,3 +262,8 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 .dk{padding:6px 10px 4px}.dk button{height:38px}
 .nav button{padding:6px 0 0}
 #c_cross{font-size:16px;padding:0 10px}#c_cross.on{color:#e6c14b}
+
+/* v0.19: bars flush to the bottom edge */
+.dock,.nav{padding-bottom:0!important}
+.nav button{padding:6px 0 4px}
+.nav{padding-bottom:0!important}
