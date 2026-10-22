@@ -267,3 +267,10 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 .dock,.nav{padding-bottom:0!important}
 .nav button{padding:6px 0 4px}
 .nav{padding-bottom:0!important}
+
+/* v0.19.1: fill the true screen height, no dead strip under the tab bar */
+html,body{position:fixed;top:0;left:0;right:0;bottom:0;height:auto;min-height:-webkit-fill-available}
+#app{position:fixed;top:0;left:0;right:0;bottom:0;height:auto}
+.dock{padding-bottom:0!important}
+.nav{padding-bottom:env(safe-area-inset-bottom)!important;min-height:calc(50px + env(safe-area-inset-bottom))}
+.nav button{padding:8px 0 calc(env(safe-area-inset-bottom) * .45)}
