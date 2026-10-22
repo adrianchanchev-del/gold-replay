@@ -1,5 +1,5 @@
-// Retest service worker. Build: gr-v21
-const V='gr-v21';
+// Retest service worker. Build: gr-v22
+const V='gr-v22';
 const CACHE = V;
 const ASSETS = ['./', 'index.html', 'app.js', 'engine.js', 'sync.js', 'patterns.js', 'style.css', 'lightweight-charts.js', 'manifest.json'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS).catch(() => {})).then(() => self.skipWaiting())); });
@@ -7,5 +7,5 @@ self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) =
 // network first, fall back to cache when offline
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(fetch(e.request).then((r) => { const cp = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, cp)).catch(() => {}); return r; }).catch(() => caches.match(e.request)));
+  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then((r) => { const cp = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, cp)).catch(() => {}); return r; }).catch(() => caches.match(e.request)));
 });

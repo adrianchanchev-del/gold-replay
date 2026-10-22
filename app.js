@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.17.1', BUILD = 'gr-v21';
+  const APP_VERSION = '0.17.2', BUILD = 'gr-v22';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -2107,7 +2107,9 @@
   async function forceRefresh() {
     try { const rs = await navigator.serviceWorker.getRegistrations(); for (const r of rs) await r.unregister(); } catch (e) {}
     try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
-    location.href = location.pathname + '?r=' + Date.now();
+    const files = ['./', 'index.html', 'app.js', 'engine.js', 'sync.js', 'patterns.js', 'style.css', 'lightweight-charts.js', 'manifest.json', 'sw.js', 'data-index.json'];
+    await Promise.all(files.map((f) => fetch(f, { cache: 'reload' }).catch(() => {})));
+    location.replace(location.pathname + '?r=' + Date.now());
   }
   function renderSettings() {
     const imgs = loadImgs(), ft = E.t(0), lt = E.t(E.n() - 1), nd = dayList().length;
