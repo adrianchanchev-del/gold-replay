@@ -24,7 +24,7 @@
   async function pushAll(withImgs) {
     if (!user || busy) return; busy = true; status = 'Syncing\u2026'; refresh();
     try {
-      const P = H.getP(); if (!P || !P.plan) { status = 'Signed in, nothing to upload yet'; return; }
+      const P = H.getP(); if (!P || !P.plan) { status = 'Signed in, nothing to upload yet'; busy = false; refresh(); return; }
       const m = P._m || Date.now();
       const body = JSON.stringify(P);
       if (body.length > 900000) throw new Error('Profile too large for cloud (' + Math.round(body.length / 1024) + ' KB)');

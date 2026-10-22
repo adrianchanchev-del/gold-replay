@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.16.1', BUILD = 'gr-v18';
+  const APP_VERSION = '0.16.2', BUILD = 'gr-v19';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -23,11 +23,11 @@
   let W = null, wStep = 0; // wizard
 
   function loadP() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
-  function saveP() { try { if (P && !noStamp) P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); if (window.Sync) window.Sync.changed(false); } catch (e) {} }
-  let noStamp = false;
+  function saveP() { try { if (frozen) return; if (P && !noStamp) P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); if (window.Sync) window.Sync.changed(false); } catch (e) {} }
+  let noStamp = false, frozen = false;
   const IKEY = 'goldreplay.imgs';
   function loadImgs() { try { return JSON.parse(localStorage.getItem(IKEY)) || []; } catch (e) { return []; } }
-  function saveImgs(a) { try { localStorage.setItem(IKEY, JSON.stringify(a)); if (P) { P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); } if (window.Sync) window.Sync.changed(true); return true; } catch (e) { toast('Storage full, remove a picture first'); return false; } }
+  function saveImgs(a) { try { if (frozen) return false; localStorage.setItem(IKEY, JSON.stringify(a)); if (P) { P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); } if (window.Sync) window.Sync.changed(true); return true; } catch (e) { toast('Storage full, remove a picture first'); return false; } }
   function shrink(file) {
     return new Promise((res, rej) => {
       const fr = new FileReader();
@@ -94,7 +94,7 @@
     if (window.Sync) window.Sync.attach({
       getP: () => P, getImgs: loadImgs,
       refresh: () => { if (tab === 'settings' && !document.activeElement.matches('input')) renderSettings(); },
-      applyRemote: (p, imgs, m) => { p._m = m; localStorage.setItem(KEY, JSON.stringify(p)); localStorage.setItem(IKEY, JSON.stringify(imgs || [])); localStorage.setItem('retest.sync.m', String(m)); location.reload(); },
+      applyRemote: (p, imgs, m) => { frozen = true; p._m = m; localStorage.setItem(KEY, JSON.stringify(p)); localStorage.setItem(IKEY, JSON.stringify(imgs || [])); localStorage.setItem('retest.sync.m', String(m)); location.reload(); },
       ask: (html, onDev, onCloud) => { modal(html); $('#sy_dev').onclick = () => { closeModal(); onDev(); }; $('#sy_cl').onclick = () => { closeModal(); onCloud(); }; }
     });
     try { await loadData(); } catch (e) {
