@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.15.0', BUILD = 'gr-v16';
+  const APP_VERSION = '0.16.0', BUILD = 'gr-v17';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -23,10 +23,11 @@
   let W = null, wStep = 0; // wizard
 
   function loadP() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
-  function saveP() { try { localStorage.setItem(KEY, JSON.stringify(P)); } catch (e) {} }
+  function saveP() { try { if (P && !noStamp) P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); if (window.Sync) window.Sync.changed(false); } catch (e) {} }
+  let noStamp = false;
   const IKEY = 'goldreplay.imgs';
   function loadImgs() { try { return JSON.parse(localStorage.getItem(IKEY)) || []; } catch (e) { return []; } }
-  function saveImgs(a) { try { localStorage.setItem(IKEY, JSON.stringify(a)); return true; } catch (e) { toast('Storage full, remove a picture first'); return false; } }
+  function saveImgs(a) { try { localStorage.setItem(IKEY, JSON.stringify(a)); if (P) { P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); } if (window.Sync) window.Sync.changed(true); return true; } catch (e) { toast('Storage full, remove a picture first'); return false; } }
   function shrink(file) {
     return new Promise((res, rej) => {
       const fr = new FileReader();
@@ -90,6 +91,12 @@
     speedI = Math.min(SPEEDS.length - 1, P.set.speed || 0);
     if (!P.ind) P.ind = [{ type: 'ema', p: 20, on: true, color: PALETTE[0] }, { type: 'vol', p: 0, on: true, color: IND.vol[2] }];
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+    if (window.Sync) window.Sync.attach({
+      getP: () => P, getImgs: loadImgs,
+      refresh: () => { if (tab === 'settings' && !document.activeElement.matches('input')) renderSettings(); },
+      applyRemote: (p, imgs, m) => { p._m = m; localStorage.setItem(KEY, JSON.stringify(p)); localStorage.setItem(IKEY, JSON.stringify(imgs || [])); localStorage.setItem('retest.sync.m', String(m)); location.reload(); },
+      ask: (html, onDev, onCloud) => { modal(html); $('#sy_dev').onclick = () => { closeModal(); onDev(); }; $('#sy_cl').onclick = () => { closeModal(); onCloud(); }; }
+    });
     try { await loadData(); } catch (e) {
       $('#app').innerHTML = '<div class="center"><h2>Could not load data</h2><p class="muted">' + esc(e.message) + '</p><button class="btn" onclick="location.reload()">Retry</button></div>';
       return;
@@ -2099,7 +2106,7 @@
       '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
       '<div class="card"><b>Backup</b><p class="muted sm">Plan, XP, journal and pictures live on this device. Save a file so a phone change or cleared Safari data cannot wipe them. Updating the app never touches them.</p>' +
       '<button class="btn" id="p_export">Save backup</button> <button class="btn ghost" id="p_import">Restore backup</button><input type="file" id="p_ifile" accept=".json,application/json" hidden></div>' +
-      kbCardHtml() + '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
+      (window.Sync ? window.Sync.cardHtml() : '') + kbCardHtml() + '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
     latestBuild().then((lb) => { const el = $('#v_latest'); if (!el) return; el.innerHTML = !lb ? 'Latest on server: could not check (offline?)' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; });
     $('#v_check').onclick = () => { $('#v_latest').textContent = 'Latest on server: checking\u2026'; latestBuild().then((lb) => { $('#v_latest').innerHTML = !lb ? 'Could not check' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; }); };
     $('#v_force').onclick = forceRefresh;
@@ -2115,6 +2122,7 @@
     };
     document.querySelectorAll('[data-rmimg]').forEach((b) => (b.onclick = () => { const a = loadImgs(); a.splice(+b.dataset.rmimg, 1); saveImgs(a); renderSettings(); }));
     document.querySelectorAll('[data-view]').forEach((im) => (im.onclick = () => showImg(+im.dataset.view)));
+    if (window.Sync) window.Sync.bind($);
     $('#p_export').onclick = doExport;
     $('#p_import').onclick = () => $('#p_ifile').click();
     $('#p_ifile').onchange = (e) => e.target.files[0] && doImport(e.target.files[0]);

@@ -1,7 +1,7 @@
-// Retest service worker. Build: gr-v16
-const V='gr-v16';
+// Retest service worker. Build: gr-v17
+const V='gr-v17';
 const CACHE = V;
-const ASSETS = ['./', 'index.html', 'app.js', 'engine.js', 'patterns.js', 'style.css', 'lightweight-charts.js', 'manifest.json'];
+const ASSETS = ['./', 'index.html', 'app.js', 'engine.js', 'sync.js', 'patterns.js', 'style.css', 'lightweight-charts.js', 'manifest.json'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS).catch(() => {})).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 // network first, fall back to cache when offline
