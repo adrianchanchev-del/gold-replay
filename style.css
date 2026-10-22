@@ -246,3 +246,5 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
 .sheet h4{margin:14px 0 4px;font-size:13px;color:#e6c14b}
 .lbl{display:block;margin-top:10px}
+
+.stats4.s5{grid-template-columns:repeat(5,1fr)}.stats4.acs{margin:8px 0}.stats4.s5 .kv b,.stats4.s5 #h_cnt{font-size:15px}

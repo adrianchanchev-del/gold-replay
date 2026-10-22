@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.16.2', BUILD = 'gr-v19';
+  const APP_VERSION = '0.17.0', BUILD = 'gr-v20';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -281,12 +281,12 @@
     const days = dayList().filter((d) => SESSIONS.some((s) => startIdx(d, s[1]) >= 0));
     if (!days.length) { $('#view').innerHTML = '<div class="page"><h2>No data</h2></div>'; return; }
     if (selDay == null || !days.includes(selDay)) selDay = days[days.length - 1];
+    if (!curAcct() && (P.accts || []).length) { const L = P.accts, pick = L.slice().reverse().find((x) => x.status === 'active') || L[0]; P.curAcct = pick.id; saveP(); }
     const a0 = curAcct();
     const d0 = fmtDay(days[0]), d1 = fmtDay(days[days.length - 1]);
     $('#view').innerHTML = '<div class="page"><h2>New session</h2><p class="muted">Real spot gold (XAUUSD) 1-minute data. The future is hidden and revealed as you step forward.</p>' +
       '<div class="card" id="ac_box"></div><div class="card"><label>Day</label><select id="s_day">' + days.slice().reverse().map((d) => '<option value="' + d + '"' + (d === selDay ? ' selected' : '') + '>' + fmtDay(d) + '</option>').join('') + '</select>' +
       '<label>Session (UTC start time)</label><div class="chips" id="s_sess"></div>' +
-      '<label>Starting balance</label><input id="s_bal" type="number" inputmode="decimal" value="' + (a0 ? a0.bal : P.plan.balance) + '"' + (a0 ? ' disabled' : '') + '>' +
       '<button class="btn big" id="s_go">Begin session</button><button class="btn ghost big" id="s_rand">Random day and session</button>' +
       '<p class="muted sm">Data: ' + d0.slice(5) + ' to ' + d1.slice(5) + ' &middot; ' + days.length + ' trading days &middot; more days are added automatically.</p></div>' +
       '<div class="card"><b>Your risk rules</b><div class="muted">' + P.plan.risk.pct + '% per trade &middot; min RR ' + P.plan.risk.minRR + ' &middot; ' + P.plan.risk.maxTrades + ' trades/day &middot; ' + P.plan.risk.dailyLoss + '% daily loss limit</div></div></div>';
@@ -307,7 +307,8 @@
     bindAcctBox(a0);
     function begin() {
       const a1 = curAcct(), idx = startIdx(selDay, SESSIONS[selSess][1]);
-      const bal = a1 ? a1.bal : Math.max(100, +$('#s_bal').value || 1000);
+      if (!a1) { toast('Create a trading account first'); AD = fundDraft('two'); acctForm(); return; }
+      const bal = a1.bal;
       if (idx < 0) { toast('No data for that session'); return; }
       const t = E.t(idx);
       if (a1 && a1.status !== 'active') { toast('This account is ' + a1.status + '. Start a new attempt first.'); return; }
@@ -609,12 +610,22 @@
       acctInit(a); P.accts = P.accts || []; P.accts.push(a); P.curAcct = a.id; saveP(); closeModal(); renderStart();
     };
   }
+  const hasDD = () => { const a = AC(); return !!(a && a.type === 'funded' && a.cfg && (a.cfg.dailyDD || a.cfg.maxDD)); };
+  function acctStatsHtml(a) {
+    const H = a.tr || [], wr = H.length ? Math.round(H.filter((h) => h.pnl > 0).length / H.length * 100) + '%' : '--', r = avgROf(H), pl = a.bal - a.base, rm = ddRoom(a, a.bal);
+    const cl = (v) => (v == null || Math.abs(v) < 0.005 ? '' : v > 0 ? 'up' : 'dn');
+    const box = (l, v, c, s) => '<span class="kv"><i>' + l + '</i><b class="' + (c || '') + '">' + v + '</b>' + (s ? '<em class="sub">' + s + '</em>' : '') + '</span>';
+    const rt = (v) => (v == null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(2) + 'R');
+    const dd = a.type === 'funded' && (rm.d != null || rm.m != null) ? box('DD room', rm.d != null ? fmt(rm.d) : '--', '', 'Max <u>' + (rm.m != null ? fmt(rm.m) : '--') + '</u>') : '';
+    return '<div class="stats4 acs' + (dd ? ' s5' : '') + '">' + box('Balance', fmt(a.bal)) + box('P&amp;L', (pl >= 0 ? '+' : '') + fmt(pl), cl(pl)) + dd + box('Win rate', wr, '', H.length + ' trades') + box('Avg R', rt(r), cl(r), 'wins only') + '</div>';
+  }
   function bindAcctBox(a0) {
     const box = $('#ac_box'); if (!box) return; const list = P.accts || [];
-    let h = '<label class="lbl" style="margin-top:0">Account</label><div class="chips"><span class="chip ' + (!a0 ? 'on' : '') + '" data-ac="">Practice</span>' + list.map((x) => '<span class="chip ' + (a0 && a0.id === x.id ? 'on' : '') + '" data-ac="' + x.id + '">' + esc(x.name) + '</span>').join('') + '<span class="chip add" id="ac_new">+ New account</span></div>';
+    let h = '<label class="lbl" style="margin-top:0">Account</label><div class="chips">' + list.map((x) => '<span class="chip ' + (a0 && a0.id === x.id ? 'on' : '') + '" data-ac="' + x.id + '">' + esc(x.name) + '</span>').join('') + '<span class="chip add" id="ac_new">+ New account</span></div>';
+    if (!a0) h += '<p class="muted">You need a trading account before you can start a session. Tap + New account to make a live or funded-prep account.</p>';
     if (a0) {
       const m = acctM(a0, a0.bal);
-      h += '<div class="srow"><span>' + (a0.type === 'live' ? 'Live' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
+      h += acctStatsHtml(a0) + '<div class="srow"><span>' + (a0.type === 'live' ? 'Live' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
         (m.ph ? pbar(m.cp / m.target) + '<div class="muted sm">Profit ' + fmt(m.cp) + ' of ' + fmt(m.target) + ' target</div>' : '') +
         '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt</button>' : '') + '<button class="ghost2" id="ac_del">Delete</button></div>' +
         '<p class="muted sm">Sessions on this account continue from its balance. You can only move forward in time.</p>';
@@ -636,7 +647,9 @@
   }
   const dayHist = () => { const pid = S.pending && !S.pending.check ? S.pending.id : null, H = (S.hist || []).filter((h) => h.id !== pid); return { s: H, d: H.filter((h) => Math.floor(h.t1 / 1440) === S.dayKey) }; };
   const wrOf = (H) => (H.length ? Math.round(H.filter((h) => h.pnl > 0).length / H.length * 100) + '%' : '--');
-  const avgROf = (H) => (H.length ? H.reduce((x, h) => x + h.r, 0) / H.length : null);
+  const avgROf = (H) => { const W = H.filter((h) => h.pnl > 0); return W.length ? W.reduce((x, h) => x + h.r, 0) / W.length : null; };
+  const accHist = () => { const a = AC(), pid = S.pending && !S.pending.check ? S.pending.id : null, H = (a ? (a.tr || []) : (S.hist || [])).filter((h) => h.id !== pid); return { s: H, d: H.filter((h) => Math.floor(h.t1 / 1440) === S.dayKey) }; };
+  const ddRoom = (a, eq) => { const m = acctM(a, eq); return { d: m.dLevel != null ? Math.max(0, eq - m.dLevel) : null, m: m.mLevel != null ? Math.max(0, eq - m.mLevel) : null }; };
 
   // ---------- replay ----------
   let HIST = [], IS = [];
@@ -671,7 +684,7 @@
     $('#view').innerHTML = '<div class="rp">' +
       '<div class="top">' +
       '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span><span id="h_acct" class="stag acc" style="display:none"></span><span class="trc">Trades <b id="h_cnt"></b></span></div>' +
-      '<div class="stats4"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Equity <u id="h_eq"></u></em></span><span class="kv"><i>Session P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span><span class="kv"><i>Session WR</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Session avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
+      '<div class="stats4' + (hasDD() ? ' s5' : '') + '"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Equity <u id="h_eq"></u></em></span><span class="kv"><i>P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span>' + (hasDD() ? '<span class="kv"><i>DD room</i><b id="h_dd"></b><em class="sub">Max <u id="h_mdd"></u></em></span>' : '') + '<span class="kv"><i>Win rate</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
       '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
       '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><div id="favis" class="favis"></div><div id="toolpanel" class="toolpanel"></div><div id="ctxm" class="ctxm"></div>' +
@@ -1628,7 +1641,9 @@
   }
   function recordHist(t, sc) {
     S.hist = S.hist || [];
-    S.hist.push({ id: t.id, t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc ? sc.total : null, max: sc ? sc.max : null, onplan: sc ? !sc.mistake : null });
+    const rec = { id: t.id, t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc ? sc.total : null, max: sc ? sc.max : null, onplan: sc ? !sc.mistake : null };
+    S.hist.push(rec);
+    const ac = AC(); if (ac) { ac.tr = ac.tr || []; if (!ac.tr.some((x) => x.id === rec.id)) ac.tr.push({ id: rec.id, t1: rec.t1, pnl: rec.pnl, r: rec.r }); }
     refreshMarkers();
   }
   function openHistory() {
@@ -1654,13 +1669,13 @@
     const H = S.hist || [], n = H.length, wins = H.filter((h) => h.pnl > 0), losses = H.filter((h) => h.pnl < 0);
     const gw = wins.reduce((a, h) => a + h.pnl, 0), gl = Math.abs(losses.reduce((a, h) => a + h.pnl, 0)), sc = H.filter((h) => h.score != null && h.max);
     const net = S.balance - S.startBal, totR = H.reduce((a, h) => a + h.r, 0);
-    return { t: Date.now(), n, net, ret: S.startBal ? net / S.startBal * 100 : 0, wr: n ? wins.length / n * 100 : null, totR: n ? totR : null, avgR: n ? totR / n : null,
+    return { t: Date.now(), n, net, ret: S.startBal ? net / S.startBal * 100 : 0, wr: n ? wins.length / n * 100 : null, totR: n ? totR : null, avgR: avgROf(H),
       pf: gl > 0 ? gw / gl : (gw > 0 ? 99 : null), score: sc.length ? sc.reduce((a, h) => a + h.score / h.max * 100, 0) / sc.length : null,
       best: n ? Math.max.apply(null, H.map((h) => h.pnl)) : null, worst: n ? Math.min.apply(null, H.map((h) => h.pnl)) : null, mode: S.jmode || 'trade' };
   }
   const SMET = [
     ['net', 'Net P&L', (v) => fmt(v), 1], ['ret', 'Return', (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + '%', 1], ['n', 'Trades', (v) => String(v), 0],
-    ['wr', 'Win rate', (v) => Math.round(v) + '%', 1], ['totR', 'Total R', (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + 'R', 1], ['avgR', 'Avg R per trade', (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + 'R', 1],
+    ['wr', 'Win rate', (v) => Math.round(v) + '%', 1], ['totR', 'Total R', (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + 'R', 1], ['avgR', 'Avg R (wins only)', (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + 'R', 1],
     ['pf', 'Profit factor', (v) => (v >= 99 ? '&infin;' : v.toFixed(2)), 1], ['score', 'Avg plan score', (v) => Math.round(v) + '%', 1], ['best', 'Best trade', (v) => fmt(v), 1], ['worst', 'Worst trade', (v) => fmt(v), 1],
   ];
   function statsModal(st, prev, done) {
@@ -1800,11 +1815,12 @@
     const cn = $('#h_cnt'); if (cn) cn.textContent = S.dayTrades + '/' + P.plan.risk.maxTrades;
     const masked = S.pending && !S.pending.check, DOT = '\u2022\u2022\u2022\u2022';
     const put = (id, txt, v) => { const el = $('#' + id); if (!el) return; el.textContent = txt; el.className = v == null || Math.abs(v) < 0.005 ? '' : (v > 0 ? 'up' : 'dn'); };
-    const eq = equity(), sg = (v) => (v >= 0 ? '+' : '') + fmt(v), hh = dayHist(), rs = avgROf(hh.s), rd = avgROf(hh.d);
+    const eq = equity(), sg = (v) => (v >= 0 ? '+' : '') + fmt(v), hh = accHist(), rs = avgROf(hh.s), rd = avgROf(hh.d), ac = AC(), plBase = ac ? ac.base : S.startBal;
     const rt = (v) => (v == null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(2) + 'R');
     $('#h_bal').textContent = masked ? DOT : fmt(S.balance);
     put('h_eq', masked ? DOT : fmt(eq), masked ? null : eq - S.balance);
-    put('h_pnl', masked ? DOT : sg(eq - S.startBal), masked ? null : eq - S.startBal);
+    put('h_pnl', masked ? DOT : sg(eq - plBase), masked ? null : eq - plBase);
+    if (ac && $('#h_dd')) { const rm = ddRoom(ac, eq); put('h_dd', masked ? DOT : (rm.d != null ? fmt(rm.d) : '--'), null); put('h_mdd', masked ? DOT : (rm.m != null ? fmt(rm.m) : '--'), null); }
     put('h_dpnl', masked ? DOT : sg(eq - S.dayStartBal), masked ? null : eq - S.dayStartBal);
     put('h_wr', wrOf(hh.s)); put('h_dwr', wrOf(hh.d));
     put('h_rr', rt(rs), rs); put('h_drr', rt(rd), rd);
