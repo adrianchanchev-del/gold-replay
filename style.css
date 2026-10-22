@@ -248,3 +248,9 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 .lbl{display:block;margin-top:10px}
 
 .stats4.s5{grid-template-columns:repeat(5,1fr)}.stats4.acs{margin:8px 0}.stats4.s5 .kv b,.stats4.s5 #h_cnt{font-size:15px}
+
+/* v0.17.1: stat boxes never clip digits */
+.stats4 .kv{padding:7px 5px;container-type:inline-size}
+.stats4 .kv b,.stats4 #h_cnt{font-size:clamp(9px,17cqw,17px);font-variant-numeric:tabular-nums;overflow:visible}
+.stats4.acs.s5{grid-template-columns:repeat(3,1fr)}
+.stats4.acs.s5 .kv b{font-size:clamp(9px,15cqw,17px)}

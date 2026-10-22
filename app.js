@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.17.0', BUILD = 'gr-v20';
+  const APP_VERSION = '0.17.1', BUILD = 'gr-v21';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -625,7 +625,7 @@
     if (!a0) h += '<p class="muted">You need a trading account before you can start a session. Tap + New account to make a live or funded-prep account.</p>';
     if (a0) {
       const m = acctM(a0, a0.bal);
-      h += acctStatsHtml(a0) + '<div class="srow"><span>' + (a0.type === 'live' ? 'Live' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
+      h += acctStatsHtml(a0) + '<div class="srow"><span>' + (a0.type === 'live' ? 'Account' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
         (m.ph ? pbar(m.cp / m.target) + '<div class="muted sm">Profit ' + fmt(m.cp) + ' of ' + fmt(m.target) + ' target</div>' : '') +
         '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt</button>' : '') + '<button class="ghost2" id="ac_del">Delete</button></div>' +
         '<p class="muted sm">Sessions on this account continue from its balance. You can only move forward in time.</p>';
