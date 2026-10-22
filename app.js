@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.16.0', BUILD = 'gr-v17';
+  const APP_VERSION = '0.16.1', BUILD = 'gr-v18';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -118,7 +118,7 @@
     const prog = '<div class="wprog">' + STEPS.map((s, i) => '<span class="' + (i === wStep ? 'on' : i < wStep ? 'done' : '') + '">' + (i + 1) + '</span>').join('') + '</div>';
     let body = '';
     if (wStep === 0) {
-      body = (!W._editing && !P.plan ? '<div class="card"><b>Already set up before?</b><div class="muted sm">The Home Screen app does not share storage with Safari. Restore a backup file here.</div><button class="btn ghost" id="w_restore" style="margin-top:8px">Restore backup</button><input type="file" id="w_rfile" accept=".json,application/json" hidden></div>' : '') + '<h2>What are you trading?</h2><p class="muted">Gold only for now, built from 1-minute data (Sep 2023 to now).</p>' +
+      body = (!W._editing && !P.plan && window.Sync ? window.Sync.cardHtml(true) : '') + (!W._editing && !P.plan ? '<div class="card"><b>Already set up before?</b><div class="muted sm">The Home Screen app does not share storage with Safari. Restore a backup file here.</div><button class="btn ghost" id="w_restore" style="margin-top:8px">Restore backup</button><input type="file" id="w_rfile" accept=".json,application/json" hidden></div>' : '') + '<h2>What are you trading?</h2><p class="muted">Gold only for now, built from 1-minute data (Sep 2023 to now).</p>' +
         '<label>Your name or trader tag</label><input id="w_name" value="' + esc(W.name) + '" placeholder="e.g. Andi">' +
         '<label>Market</label><input value="XAUUSD (gold)" disabled>' +
         '<label>Timeframes you use (tap to toggle)</label><div class="chips">' +
@@ -198,6 +198,7 @@
     q('[data-ctext]').forEach((el) => el.oninput = () => { W.conf[+el.dataset.ctext].text = el.value; });
     q('[data-cwhy]').forEach((el) => el.oninput = () => { W.conf[+el.dataset.cwhy].why = el.value; });
     q('[data-creq]').forEach((el) => el.onchange = () => { W.conf[+el.dataset.creq].required = el.checked; });
+    if (window.Sync && document.querySelector('#sy_in, #sy_out')) window.Sync.bind($);
     const rs = $('#w_restore'); if (rs) { rs.onclick = () => $('#w_rfile').click(); $('#w_rfile').onchange = (e) => e.target.files[0] && doImport(e.target.files[0]); }
     const bk = $('#wBack'); if (bk) bk.onclick = () => { collect(); wStep--; renderWizard(); };
     const cn = $('#wCancel'); if (cn) cn.onclick = () => { W = null; showTab('plan'); };

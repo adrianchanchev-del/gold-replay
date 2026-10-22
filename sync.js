@@ -15,7 +15,8 @@
       auth.onAuthStateChanged((u) => { user = u; status = u ? 'Signed in as ' + (u.email || u.displayName) : 'Not signed in'; refresh(); if (u) firstSync(); });
     } catch (e) { status = 'Sync unavailable (offline?)'; refresh(); }
   }
-  function refresh() { if (H && H.refresh) H.refresh(); }
+  function refresh() { const e = document.querySelector('#sy_st'); if (e) e.textContent = status; if (H && H.refresh) H.refresh(); }
+  const hasPlanLocal = () => { const P = H.getP(); return !!(P && P.plan); };
   const getM = () => +(localStorage.getItem(MKEY) || 0);
   const docRef = () => db.collection('users').doc(user.uid);
   const imgCol = () => docRef().collection('imgs');
@@ -23,7 +24,7 @@
   async function pushAll(withImgs) {
     if (!user || busy) return; busy = true; status = 'Syncing\u2026'; refresh();
     try {
-      const P = H.getP(); if (!P) return;
+      const P = H.getP(); if (!P || !P.plan) { status = 'Signed in, nothing to upload yet'; return; }
       const m = P._m || Date.now();
       const body = JSON.stringify(P);
       if (body.length > 900000) throw new Error('Profile too large for cloud (' + Math.round(body.length / 1024) + ' KB)');
@@ -50,7 +51,7 @@
     try {
       const snap = await docRef().get(), P = H.getP(), same = localStorage.getItem(UKEY) === user.uid;
       localStorage.setItem(UKEY, user.uid);
-      if (!snap.exists) { await pushAll(true); return; }
+      if (!snap.exists) { if (hasPlanLocal()) await pushAll(true); else { status = 'Signed in. This account has no saved plan yet.'; refresh(); } return; }
       const rm = snap.data().m || 0, lm = P ? (P._m || 0) : 0, hasLocal = P && P.plan;
       if (!hasLocal) { await pullApply(); return; }
       if (same) {
@@ -86,16 +87,16 @@
   window.Sync = {
     attach(h) { H = h; boot(); },
     changed,
-    cardHtml() {
-      if (user) return '<div class="card"><b>Account</b><p class="sm">' + status + '</p><p class="muted sm">Your plan, journal, accounts, notes, settings and pictures follow you to any device you sign in on.</p><button class="btn" id="sy_now">Sync now</button> <button class="btn ghost" id="sy_out">Sign out</button></div>';
-      return '<div class="card"><b>Account</b><p class="muted sm">Sign in to keep your data in the cloud and use it on other devices. ' + (ready ? '' : 'Loading\u2026 ') + '</p><p class="sm" id="sy_st">' + status + '</p>' +
+    cardHtml(welcome) {
+      if (user) return '<div class="card"><b>Account</b><p class="muted sm">Your plan, journal, accounts, notes, settings and pictures follow you to any device you sign in on.</p><p class="sm" id="sy_st">' + status + '</p><button class="btn" id="sy_now">Upload this device</button> <button class="btn ghost" id="sy_pull">Load from cloud</button> <button class="btn ghost" id="sy_out">Sign out</button></div>';
+      return '<div class="card"><b>' + (welcome ? 'Already have an account?' : 'Account') + '</b><p class="muted sm">' + (welcome ? 'Sign in and your plan, journal and settings load straight in. No setup needed.' : 'Sign in to keep your data in the cloud and use it on other devices. ') + (ready ? '' : 'Loading\u2026 ') + '</p><p class="sm" id="sy_st">' + status + '</p>' +
         '<input id="sy_em" type="email" placeholder="Email" autocomplete="email" style="width:100%;margin:4px 0"><input id="sy_pw" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;margin:4px 0">' +
         '<button class="btn" id="sy_in">Sign in</button> <button class="btn ghost" id="sy_up">Create account</button> <button class="btn ghost" id="sy_g">Google</button> <button class="btn ghost" id="sy_rs">Forgot password</button></div>';
     },
     bind($) {
       const say = (t) => { const e = $('#sy_st'); if (e) e.textContent = t; };
       const go = (fn) => async () => { if (!ready) return say('Not loaded yet, check your connection'); try { await fn(); } catch (e) { say(errMsg(e)); } };
-      if (user) { $('#sy_now').onclick = () => { pushAll(true); }; $('#sy_out').onclick = async () => { await auth.signOut(); localStorage.removeItem(UKEY); }; return; }
+      if (user) { $('#sy_now').onclick = () => { pushAll(true); }; $('#sy_pull').onclick = async () => { try { status = 'Loading\u2026'; refresh(); if (!(await pullApply())) { status = 'Nothing saved in the cloud yet'; refresh(); } } catch (e) { status = 'Load error: ' + (e.message || e.code); refresh(); } }; $('#sy_out').onclick = async () => { await auth.signOut(); localStorage.removeItem(UKEY); }; return; }
       const cr = () => [$('#sy_em').value.trim(), $('#sy_pw').value];
       $('#sy_in').onclick = go(() => auth.signInWithEmailAndPassword(...cr()));
       $('#sy_up').onclick = go(() => auth.createUserWithEmailAndPassword(...cr()));
