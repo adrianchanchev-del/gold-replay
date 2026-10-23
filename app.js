@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.20.4', BUILD = 'gr-v31';
+  const APP_VERSION = '0.21.0', BUILD = 'gr-v32';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -250,7 +250,7 @@
     tab = t; pause();
     if (t !== 'replay') destroyChart();
     $('#app').innerHTML = '<div id="view"></div><div class="dock">' + (t === 'replay' && S ? '<div id="tradebar"></div>' : '') + '<nav class="nav">' +
-      [['replay', 'Replay'], ['stats', 'Stats'], ['plan', 'Plan'], ['settings', 'Settings']].map((x) => '<button data-tab="' + x[0] + '" class="' + (t === x[0] ? 'on' : '') + '">' + ICON[x[0]] + '<span>' + x[1] + '</span></button>').join('') + '</nav></div>';
+      [['replay', 'Replay'], ['stats', 'Journal & Data'], ['plan', 'Plan'], ['settings', 'Settings']].map((x) => '<button data-tab="' + x[0] + '" class="' + (t === x[0] ? 'on' : '') + '">' + ICON[x[0]] + '<span>' + x[1] + '</span></button>').join('') + '</nav></div>';
     document.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { if (b.dataset.tab !== tab) showTab(b.dataset.tab); });
     if (t === 'replay') (S ? renderReplay() : renderStart());
     else if (t === 'stats') renderStats();
@@ -706,7 +706,7 @@
     const crossBtn = $('#c_cross');
     if (crossBtn) { crossBtn.classList.toggle('on', !!P.set.cross); crossBtn.onclick = () => { setCross(!P.set.cross); crossBtn.classList.toggle('on', !!P.set.cross); }; }
     $('#c_hist').onclick = () => { pause(); openHistory(); };
-    $('#c_note').onclick = noteModal;
+    $('#c_note').onclick = toggleNote;
     $('#c_end').onclick = endSession;
     drawTradebar(); refreshHud(); drawLines();
     cancelAnimationFrame(ovRaf); ovRaf = requestAnimationFrame(ovLoop);
@@ -1289,7 +1289,7 @@
 
   // ---- movable islands ----
   function placeMovable(key) {
-    const el = key === 'fav' ? $('#favis') : $('.island'), wrap = $('#chartwrap'); if (!el || !wrap) return;
+    const el = key === 'fav' ? $('#favis') : key === 'note' ? $('#qnote') : $('.island'), wrap = $('#chartwrap'); if (!el || !wrap) return;
     const p = P.set && P.set.pos && P.set.pos[key]; if (!p) return;
     const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
     el.style.left = Math.max(0, Math.min(W - w, p.fx * W)) + 'px'; el.style.top = Math.max(0, Math.min(H - h, p.fy * H)) + 'px';
@@ -1393,8 +1393,13 @@
 
   // ---------- chart view: remember it, reset it only on request ----------
   let savedView = null, viewTouched = false;
-  function getPR() { const ph = plotSize().ph; return { top: series.coordinateToPrice(ph * 0.08), bot: series.coordinateToPrice(ph * 0.86) }; }
+  function setPR(top, bot) { const sp = (top - bot) / 0.78; try { series.priceScale().setVisibleRange({ from: bot - 0.14 * sp, to: top + 0.08 * sp }); } catch (e) {} }
+  function getPR() {
+    try { const vr = series.priceScale().getVisibleRange(); if (vr && isFinite(vr.from) && isFinite(vr.to) && vr.to > vr.from) return { top: vr.to, bot: vr.from }; } catch (e) {}
+    const ph = plotSize().ph; return { top: series.coordinateToPrice(ph * 0.08), bot: series.coordinateToPrice(ph * 0.86) };
+  }
 
+  window.__dbg = () => ({ man, top: getPR().top, bot: getPR().bot, as: series.priceScale().options().autoScale });
   const isManual = () => man;
   function captureView() {
     if (!chart || !series || !S || !HIST.length) return null;
@@ -1527,7 +1532,7 @@
     ov.addEventListener('dblclick', () => { if (dDraft && dDraft.n === 0) finishDraft(); });
     // cursor mode with a mouse: click a drawing to pick it up
     wrap.addEventListener('pointerdown', (e) => {
-      if (e.button === 2 || e.target.closest('#dtb,#favis,#toolpanel,.island,.hd,.spw,#c_auto,#ctxm')) return;
+      if (e.button === 2 || e.target.closest('#dtb,#favis,#toolpanel,#qnote,.island,.hd,.spw,#c_auto,#ctxm')) return;
       if (dTool !== 'cur' || dGrab || e.target === ov) return;
       const { x, y } = localXY(e), h = (S.draws || []).length ? hitTest(x, y) : null;
       if (!h) { if (dSel != null) { dSel = null; setDirty(); drawTb(); } return; }
@@ -1541,7 +1546,7 @@
     }, true);
     // dragging the plot or the price axis vertically unlocks the price scale (stays until you reset it)
     wrap.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || e.target.closest('#dtb,#favis,#toolpanel,.island,.hd,.spw,#c_auto,#ctxm') || e.target === ov) return;
+      if (e.button !== 0 || e.target.closest('#dtb,#favis,#toolpanel,#qnote,.island,.hd,.spw,#c_auto,#ctxm') || e.target === ov) return;
       viewTouched = true;
       const rr = wrap.getBoundingClientRect(); let pw2 = 56; try { pw2 = chart.priceScale('right').width(); } catch (x2) {}
       const onAxis = e.clientX - rr.left >= rr.width - pw2 && e.clientY - rr.top < rr.height - 26;
@@ -1623,6 +1628,33 @@
       const t = $('#qn_t').value.trim(); if (!t) { closeModal(); return; }
       S.notes = S.notes || []; S.notes.push({ t: E.t(S.cur), px: E.close(S.cur), text: t }); saveP(); closeModal(); refreshMarkers(); toast('Note saved');
     };
+  }
+
+  function saveQNote(text) {
+    const t = String(text || '').trim(); if (!t || !S) return false;
+    const n = { t: E.t(S.cur), px: E.close(S.cur), text: t, at: Date.now(), vid: S.vid, g: 1 };
+    S.notes = S.notes || []; S.notes.push(n); P.qnotes = P.qnotes || []; P.qnotes.push(n); if (P.qnotes.length > 1000) P.qnotes.shift(); saveP(); return true;
+  }
+  function closeNote() {
+    const el = $('#qnote'); if (!el) return; const ta = $('#qn_ta');
+    if (ta && saveQNote(ta.value)) toast('Note saved');
+    el.remove(); const b = $('#c_note'); if (b) b.classList.remove('on');
+  }
+  function toggleNote() {
+    if (!S) return; if ($('#qnote')) { closeNote(); return; }
+    const wrap = $('#chartwrap'); if (!wrap) return;
+    const el = document.createElement('div'); el.id = 'qnote'; el.className = 'qnote';
+    el.innerHTML = '<div class="grip" title="Drag to move">' + UI.grip + '</div><textarea id="qn_ta" rows="4" placeholder="Note. Enter saves, Shift+Enter new line, Esc closes"></textarea>';
+    wrap.appendChild(el); const b = $('#c_note'); if (b) b.classList.add('on');
+    bindGrip(el.querySelector('.grip'), el, 'note'); placeMovable('note');
+    const ta = $('#qn_ta');
+    ta.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (saveQNote(ta.value)) { ta.value = ''; ta.placeholder = 'Saved. Next note...'; } }
+      else if (e.key === 'Escape') { e.preventDefault(); closeNote(); }
+    });
+    ['pointerdown', 'wheel'].forEach((ev) => ta.addEventListener(ev, (e) => e.stopPropagation()));
+    setTimeout(() => ta.focus(), 30);
   }
 
   // ---------- keyboard shortcuts ----------
@@ -2124,20 +2156,67 @@
   }
 
   // ---------- stats ----------
+  const STT = [['journal', 'Journal'], ['quick', 'Quick notes'], ['reviews', 'Reviews'], ['data', 'Data']];
   function renderStats() {
-    const J = P.journal, n = J.length, lv = E.levelFor(P.xp), lo = E.xpForLevel(lv), hi = E.xpForLevel(lv + 1);
-    const wins = J.filter((j) => j.pnl > 0).length, avgS = n ? J.reduce((a, j) => a + (j.max ? j.score / j.max * 100 : j.score), 0) / n : 0, avgH = J.filter((j) => j.honesty != null).length ? J.filter((j) => j.honesty != null).reduce((a, j) => a + j.honesty, 0) / J.filter((j) => j.honesty != null).length : 0;
-    const clean = J.filter((j) => j.level === 2).length, honest = J.filter((j) => j.honesty >= 1 || j.verdict === 'honest').length;
-    const leaks = [['Skipped checklist items', J.filter((j) => j.flags.incomplete).length], ['Risked more than plan', J.filter((j) => j.flags.risk).length], ['Took below-minimum RR', J.filter((j) => j.flags.rr).length], ['Broke daily limits', J.filter((j) => j.flags.limits).length], ['Widened a stop', J.filter((j) => j.flags.widened).length], ['Closed manually', J.filter((j) => j.flags.manual).length], ['Overclaimed in review', J.filter((j) => j.verdict === 'overclaimed').length]].sort((a, b) => b[1] - a[1]);
-    let h = '<div class="page"><div class="card lvl"><div class="lvn">Level ' + lv + '</div><div class="bar"><i style="width:' + Math.min(100, (P.xp - lo) / (hi - lo) * 100) + '%"></i></div><div class="muted sm">' + P.xp + ' XP &middot; ' + (hi - P.xp) + ' to level ' + (lv + 1) + '</div></div>' +
-      '<div class="kpis"><div><b>' + P.streak + '</b><span>clean streak</span></div><div><b>' + P.bestStreak + '</b><span>best</span></div><div><b>' + n + '</b><span>trades</span></div><div><b>' + (n ? Math.round(avgS) : 0) + '</b><span>avg score %</span></div></div>' +
-      '<div class="kpis"><div><b>' + (n ? Math.round(clean / n * 100) : 0) + '%</b><span>fully on-plan</span></div><div><b>' + (n ? Math.round(honest / n * 100) : 0) + '%</b><span>honest reviews</span></div><div><b>' + (n ? Math.round(wins / n * 100) : 0) + '%</b><span>win rate</span></div><div><b>' + avgH.toFixed(1) + '/2</b><span>avg honesty</span></div></div>';
-    if (n) h += '<div class="card"><b>Where you leak discipline</b>' + leaks.map((l) => '<div class="srow"><span>' + l[0] + '</span><b class="' + (l[1] ? 'dn' : 'up') + '">' + l[1] + '</b></div>').join('') + '</div>';
-    const SN = (P.sessLog || []).filter((x) => x.notes && (x.notes.learned || x.notes.changes || x.notes.other));
-    if (SN.length) h += '<h3>Session notes</h3>' + SN.slice().reverse().slice(0, 30).map((x) => '<div class="card"><div class="muted sm">' + fdate(x.t0) + ' &middot; ' + x.st.n + ' trades &middot; ' + fmt(x.st.net) + '</div>' + [['Learned', x.notes.learned], ['Changes / ideas', x.notes.changes], ['Next time', x.notes.other]].filter((r) => r[1]).map((r) => '<div class="sm" style="margin-top:6px"><b>' + r[0] + ':</b> ' + esc(r[1]) + '</div>').join('') + '</div>').join('');
-    h += '<h3>Journal</h3>' + (n ? J.map((j, ji) => [j, ji]).reverse().slice(0, 60).map((x) => { const j = x[0], ji = x[1]; return '<div class="card jr" data-ji="' + ji + '"><div class="jt"><b>' + (j.dir > 0 ? 'LONG' : 'SHORT') + '</b> <span class="muted sm">' + fdate(j.t0) + '</span><span class="sc">' + j.score + '</span></div><div class="' + (j.pnl >= 0 ? 'up' : 'dn') + '">' + fmt(j.pnl) + ' (' + j.r.toFixed(2) + 'R) &middot; ' + j.reason + '</div><div class="muted sm">You said: ' + j.said + ' &middot; verdict: ' + j.verdict + '</div><div class="sm">' + esc(j.note) + '</div>' + (j.why ? '<div class="sm muted">Why: ' + esc(j.why) + '</div>' : '') + '<div class="muted sm">' + (j.edited ? 'edited &middot; ' : '') + 'tap to edit</div></div>'; }).join('') : '<p class="muted">No trades yet. Go place one.</p>') + '</div>';
-    $('#view').innerHTML = h;
+    if (S && S.notes) { P.qnotes = P.qnotes || []; S.notes.forEach((n) => { if (!n.g) { n.g = 1; n.at = n.at || Date.now(); n.vid = S.vid; P.qnotes.push(n); } }); }
+    const st = (P.set && P.set.stTab) || 'journal', J = P.journal || [];
+    let h = '<div class="page"><div class="itabs">' + STT.map((x) => '<button data-stt="' + x[0] + '" class="' + (st === x[0] ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>';
+    if (st === 'journal') h += statsJournal(J); else if (st === 'quick') h += statsQuick(); else if (st === 'reviews') h += statsReviews(J); else h += statsData(J);
+    $('#view').innerHTML = h + '</div>';
+    document.querySelectorAll('[data-stt]').forEach((b) => (b.onclick = () => { P.set.stTab = b.dataset.stt; saveP(); renderStats(); }));
     document.querySelectorAll('[data-ji]').forEach((el) => (el.onclick = () => editJournal(+el.dataset.ji)));
+    document.querySelectorAll('[data-qd]').forEach((el) => (el.onclick = () => { const k = +el.dataset.qd, n = P.qnotes[k]; if (!n) return; if (confirm('Delete this note?')) { P.qnotes.splice(k, 1); if (S && S.notes) S.notes = S.notes.filter((x) => x !== n && x.at !== n.at); saveP(); renderStats(); } }));
+  }
+  function statsJournal(J) {
+    if (!J.length) return '<div class="card muted">No journal entries yet. They appear after each reviewed trade.</div>';
+    return J.map((j, ji) => [j, ji]).reverse().slice(0, 100).map((x) => { const j = x[0], ji = x[1];
+      return '<div class="card jr" data-ji="' + ji + '"><div class="jt"><b>' + (j.dir > 0 ? 'LONG' : 'SHORT') + '</b> <span class="muted sm">' + fdate(j.t0) + '</span><span class="sc">' + j.score + '</span></div><div class="' + (j.pnl >= 0 ? 'up' : 'dn') + '">' + fmt(j.pnl) + ' (' + j.r.toFixed(2) + 'R) &middot; ' + esc(j.reason) + '</div>' +
+        '<div class="muted sm">You said: ' + esc(j.said) + ' &middot; verdict: ' + esc(j.verdict || '') + '</div>' + (j.why ? '<div class="sm" style="margin-top:4px"><b>Why:</b> ' + esc(j.why) + '</div>' : '') + (j.note ? '<div class="sm" style="margin-top:4px"><b>Review:</b> ' + esc(j.note) + '</div>' : '') + '</div>'; }).join('');
+  }
+  function statsQuick() {
+    const Q = P.qnotes || []; if (!Q.length) return '<div class="card muted">No quick notes yet. Tap the note button on the chart to open a movable note box.</div>';
+    return Q.map((n, k) => [n, k]).reverse().slice(0, 200).map((x) => '<div class="card"><div class="jt"><span class="muted sm">' + fdate(x[0].t) + ' &middot; ' + fmt(x[0].px) + '</span><button class="qdel" data-qd="' + x[1] + '" title="Delete">&times;</button></div><div class="sm" style="white-space:pre-wrap;margin-top:4px">' + esc(x[0].text) + '</div></div>').join('');
+  }
+  function statsReviews(J) {
+    const SN = (P.sessLog || []).filter((x) => x.notes && (x.notes.learned || x.notes.changes || x.notes.other));
+    let h = '<h3>After-session notes</h3>';
+    h += SN.length ? SN.slice().reverse().slice(0, 40).map((x) => '<div class="card"><div class="muted sm">' + fdate(x.t0) + ' &middot; ' + x.st.n + ' trades &middot; ' + fmt(x.st.net) + '</div>' + [['Learned', x.notes.learned], ['Changes / ideas', x.notes.changes], ['Next time', x.notes.other]].filter((r) => r[1]).map((r) => '<div class="sm" style="margin-top:6px"><b>' + r[0] + ':</b> ' + esc(r[1]) + '</div>').join('') + '</div>').join('') : '<div class="card muted">None yet. Choose "once, after the session" journaling to get these.</div>';
+    const RV = J.map((j, ji) => [j, ji]).filter((x) => x[0].note);
+    h += '<h3>Trade reviews</h3>' + (RV.length ? RV.reverse().slice(0, 60).map((x) => '<div class="card jr" data-ji="' + x[1] + '"><div class="jt"><b>' + (x[0].dir > 0 ? 'LONG' : 'SHORT') + '</b> <span class="muted sm">' + fdate(x[0].t0) + '</span><span class="' + (x[0].pnl >= 0 ? 'up' : 'dn') + '">' + x[0].r.toFixed(2) + 'R</span></div><div class="sm">' + esc(x[0].note) + '</div></div>').join('') : '<div class="card muted">No trade reviews yet.</div>');
+    return h;
+  }
+  function statsData(J) {
+    const n = J.length, lv = E.levelFor(P.xp), lo = E.xpForLevel(lv), hi = E.xpForLevel(lv + 1);
+    let h = '<div class="card lvl"><div class="lvn">Level ' + lv + '</div><div class="bar"><i style="width:' + Math.min(100, (P.xp - lo) / (hi - lo) * 100) + '%"></i></div><div class="muted sm">' + P.xp + ' XP &middot; clean streak ' + P.streak + ' (best ' + P.bestStreak + ')</div></div>';
+    if (!n) return h + '<div class="card muted">Statistics appear once you have reviewed trades.</div>';
+    const sum = (a, f) => a.reduce((x, y) => x + f(y), 0), W = J.filter((j) => j.pnl > 0), Lo = J.filter((j) => j.pnl < 0);
+    const gw = sum(W, (j) => j.pnl), gl = Math.abs(sum(Lo, (j) => j.pnl)), net = sum(J, (j) => j.pnl), tr = sum(J, (j) => j.r);
+    const aw = W.length ? gw / W.length : 0, al = Lo.length ? gl / Lo.length : 0, awR = W.length ? sum(W, (j) => j.r) / W.length : 0, alR = Lo.length ? sum(Lo, (j) => j.r) / Lo.length : 0;
+    const wr = W.length / n * 100, payoff = al ? aw / al : null, be = payoff ? 100 / (1 + payoff) : null, exp = tr / n;
+    let cum = 0, peak = 0, mdd = 0, cw = 0, cl = 0, bw = 0, bl = 0;
+    J.forEach((j) => { cum += j.r; peak = Math.max(peak, cum); mdd = Math.max(mdd, peak - cum); if (j.pnl > 0) { cw++; cl = 0; } else if (j.pnl < 0) { cl++; cw = 0; } else { cw = cl = 0; } bw = Math.max(bw, cw); bl = Math.max(bl, cl); });
+    const hold = (a) => (a.length ? Math.round(sum(a, (j) => j.t1 - j.t0) / a.length) : null), hm = (m) => (m == null ? '--' : m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + 'm');
+    const rr = (l, v, cls) => '<div class="srow"><span>' + l + '</span><b class="' + (cls || '') + '">' + v + '</b></div>';
+    const sgn = (v) => (v > 0 ? 'up' : v < 0 ? 'dn' : '');
+    h += '<div class="kpis"><div><b>' + n + '</b><span>trades</span></div><div><b>' + wr.toFixed(0) + '%</b><span>win rate</span></div><div><b class="' + sgn(exp) + '">' + exp.toFixed(2) + 'R</b><span>expectancy</span></div><div><b>' + (gl ? (gw / gl).toFixed(2) : (gw ? '99+' : '--')) + '</b><span>profit factor</span></div></div>';
+    if (n < 30) h += '<div class="muted sm" style="margin:4px 2px">Only ' + n + ' trades. Under about 30, these numbers are mostly noise.</div>';
+    h += '<div class="card"><b>Edge</b>' + rr('Net P&amp;L', fmt(net), sgn(net)) + rr('Total R', tr.toFixed(2) + 'R', sgn(tr)) + rr('Average win / loss', fmt(aw) + ' / ' + fmt(-al)) + rr('Average win / loss in R', awR.toFixed(2) + 'R / ' + alR.toFixed(2) + 'R') +
+      rr('Payoff ratio (avg win / avg loss)', payoff ? payoff.toFixed(2) : '--') + rr('Win rate you need to break even', be ? be.toFixed(0) + '%' : '--', be ? (wr >= be ? 'up' : 'dn') : '') + rr('Best / worst trade', fmt(Math.max.apply(null, J.map((j) => j.pnl))) + ' / ' + fmt(Math.min.apply(null, J.map((j) => j.pnl)))) + '</div>';
+    h += '<div class="card"><b>Risk and streaks</b>' + rr('Max drawdown (in R)', mdd.toFixed(2) + 'R', mdd > 6 ? 'dn' : '') + rr('Longest win streak / loss streak', bw + ' / ' + bl) + rr('Average hold: all / wins / losses', hm(hold(J)) + ' / ' + hm(hold(W)) + ' / ' + hm(hold(Lo))) + '</div>';
+    const grp = (title, keyf, order) => {
+      const m = {}; J.forEach((j) => { const k = keyf(j); (m[k] = m[k] || []).push(j); });
+      const keys = (order || Object.keys(m)).filter((k) => m[k]);
+      return '<div class="card"><b>' + title + '</b><table class="dt"><tr><th></th><th>n</th><th>WR</th><th>Avg R</th><th>Net</th></tr>' + keys.map((k) => { const a = m[k], r = sum(a, (j) => j.r) / a.length, p = sum(a, (j) => j.pnl); return '<tr><td>' + esc(k) + '</td><td>' + a.length + '</td><td>' + Math.round(a.filter((j) => j.pnl > 0).length / a.length * 100) + '%</td><td class="' + sgn(r) + '">' + r.toFixed(2) + '</td><td class="' + sgn(p) + '">' + fmt(p, 0) + '</td></tr>'; }).join('') + '</table></div>';
+    };
+    const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], NM = { SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed by hand', BREACH: 'Account rules', WEEKEND: 'Weekend close', STOPOUT: 'Margin stop-out' };
+    h += grp('By direction', (j) => (j.dir > 0 ? 'Long' : 'Short'), ['Long', 'Short']) + grp('By session (entry time)', (j) => sessName(j.t0), ['Asia', 'London', 'New York', 'Late']) +
+      grp('By weekday', (j) => DOW[new Date(j.t0 * 60000).getUTCDay()], ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sun', 'Sat']) + grp('By how it ended', (j) => NM[j.reason] || j.reason) +
+      grp('By plan adherence', (j) => (j.level === 2 ? 'On plan' : 'Off plan'), ['On plan', 'Off plan']) + grp('By result size', (j) => (j.r <= -1.05 ? 'Worse than -1R' : j.r < 0 ? '0 to -1R' : j.r < 1 ? '0 to 1R' : j.r < 2 ? '1R to 2R' : '2R or more'), ['Worse than -1R', '0 to -1R', '0 to 1R', '1R to 2R', '2R or more']);
+    const sc = J.filter((j) => j.max); const ad = n ? J.filter((j) => j.level === 2).length : 0;
+    const leaks = [['Skipped checklist items', J.filter((j) => j.flags && j.flags.incomplete).length], ['Risked more than plan', J.filter((j) => j.flags && j.flags.risk).length], ['Took below-minimum RR', J.filter((j) => j.flags && j.flags.rr).length], ['Broke daily limits', J.filter((j) => j.flags && j.flags.limits).length], ['Widened a stop', J.filter((j) => j.flags && j.flags.widened).length], ['Closed manually', J.filter((j) => j.flags && j.flags.manual).length], ['Overclaimed in review', J.filter((j) => j.verdict === 'overclaimed').length]].sort((a, b) => b[1] - a[1]);
+    h += '<div class="card"><b>Discipline</b>' + rr('Fully on plan', Math.round(ad / n * 100) + '%') + rr('Average process score', sc.length ? Math.round(sum(sc, (j) => j.score / j.max * 100) / sc.length) + '%' : '--') + '<h4>Where you leak</h4>' + leaks.map((l) => rr(l[0], l[1], l[1] ? 'dn' : 'up')).join('') + '</div>';
+    const ses = P.sessLog || []; if (ses.length) { const sw = ses.filter((x) => x.st.net > 0).length; h += '<div class="card"><b>Sessions</b>' + rr('Sessions played', ses.length) + rr('Profitable sessions', Math.round(sw / ses.length * 100) + '%') + rr('Best / worst session', fmt(Math.max.apply(null, ses.map((x) => x.st.net))) + ' / ' + fmt(Math.min.apply(null, ses.map((x) => x.st.net)))) + '</div>'; }
+    return h;
   }
   function editJournal(i) {
     const j = P.journal[i]; if (!j) return;
@@ -2232,6 +2311,6 @@
   applyBx();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   document.addEventListener('keydown', onKey);
-  window.addEventListener('resize', () => { if ($('#chartwrap')) { placeMovable('isl'); placeMovable('fav'); } });
+  window.addEventListener('resize', () => { if ($('#chartwrap')) { placeMovable('isl'); placeMovable('fav'); placeMovable('note'); } });
   boot();
 })();

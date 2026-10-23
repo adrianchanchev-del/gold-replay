@@ -278,3 +278,13 @@ html,body{position:fixed;top:0;left:0;right:0;bottom:0;height:auto;min-height:-w
 /* v0.20: adjustable bottom edge */
 #app{bottom:calc(-1 * var(--bx,0px))!important}
 .nav{padding-bottom:calc(env(safe-area-inset-bottom) + var(--bx,0px))!important}
+
+.qnote{position:absolute;left:12px;top:70px;width:270px;z-index:9;background:transparent;display:flex;flex-direction:column;gap:2px}
+.qnote .grip{align-self:flex-start;width:34px;height:14px;background:rgba(20,26,35,.55);border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none}
+.qnote .grip svg{width:12px;height:12px}
+.qnote textarea{width:100%;background:rgba(19,23,34,.28);border:1px dashed rgba(154,164,178,.45);border-radius:10px;color:#e6edf3;padding:8px;font-size:13px;resize:both;min-height:60px;backdrop-filter:none}
+.qnote textarea:focus{background:rgba(19,23,34,.5);outline:0;border-color:#e6c14b}
+.itabs{display:flex;gap:6px;margin-bottom:10px;overflow-x:auto}.itabs button{flex:1;white-space:nowrap;padding:9px 10px;border-radius:10px;border:1px solid #2b3544;background:#0d1117;color:#8b95a5;font-weight:600;font-size:13px}.itabs button.on{background:#e6c14b;color:#10141a;border-color:#e6c14b}
+.dt{width:100%;border-collapse:collapse;margin-top:6px;font-size:13px}.dt th{text-align:right;color:#6b7686;font-weight:500;font-size:11px;padding:3px 4px}.dt td{text-align:right;padding:5px 4px;border-top:1px solid #1f2733}.dt th:first-child,.dt td:first-child{text-align:left}
+.dt td.up{color:#26a69a}.dt td.dn{color:#ef5350}.qdel{background:none;border:0;color:#6b7686;font-size:20px;line-height:1}
+.kpis b.up{color:#26a69a}.kpis b.dn{color:#ef5350}
