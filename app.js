@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.20.0', BUILD = 'gr-v27';
+  const APP_VERSION = '0.20.1', BUILD = 'gr-v28';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -652,7 +652,7 @@
 
   // ---------- replay ----------
   let HIST = [], IS = [];
-  let dTool = 'cur', dSel = null, dDraft = null, dDrag = null, dGrab = false, ovSig = '', ovRaf = 0, dVer = 0, dtbOpen = false, mkApi = null, man = false, touchy = false, gs = null, docBound = false;
+  let mx = null, my = null, dTool = 'cur', dSel = null, dDraft = null, dDrag = null, dGrab = false, ovSig = '', ovRaf = 0, dVer = 0, dtbOpen = false, mkApi = null, man = false, touchy = false, gs = null, docBound = false;
   const PZ = { k: 1, off: 0 };
   const IND = { ema: ['EMA', 20, '#e6c14b'], sma: ['SMA', 50, '#4f8cff'], bb: ['Bollinger Bands', 20, '#9b8cff'], vwap: ['VWAP', 0, '#ff9f43'], rsi: ['RSI', 14, '#c792ea'], vol: ['Volume', 0, '#5c6b7f'] };
   const PALETTE = ['#e6c14b', '#4f8cff', '#ff9f43', '#c792ea', '#5ad1c4', '#ff6f91'];
@@ -1343,14 +1343,47 @@
     (S.draws || []).forEach((d, i) => paintOne(ctx, d, i === dSel, ps.pw, ps.ph));
     const dp = draftPts(); if (dp) paintOne(ctx, { type: dDraft.type, pts: dp, color: DCOL, w: 1.5, text: '' }, true, ps.pw, ps.ph);
     ctx.restore();
+    ovExtras(ctx, ps);
+  }
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function tlabel(tsec, withDate) {
+    const d = new Date(tsec * 1000), hm = String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+    return withDate ? d.getUTCDate() + ' ' + MON[d.getUTCMonth()] + ' ' + hm : hm;
+  }
+  const showXh = () => mx != null && ((dTool !== 'cur' || dGrab) || (HIST.length && mx > xl(HIST.length - 1) + 2));
+  function ovExtras(ctx, ps) {
+    const n = HIST.length; if (!n) return;
+    ctx.font = '11px -apple-system,Segoe UI,Roboto,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    // time labels to the right of the last real candle (the chart draws none there)
+    const x0 = xl(n - 1), x1 = xl(n), bp = x0 != null && x1 != null ? x1 - x0 : 0;
+    if (bp > 0.5) {
+      let k = 1; const ks = [1, 2, 3, 5, 10, 15, 30, 60, 120, 240]; for (const c of ks) { k = c; if (c * bp >= 78) break; }
+      const unit = k * S.tf, lastM = HIST[n - 1].time / 60; let t = (Math.floor(lastM / unit) + 1) * unit, prevDay = Math.floor(lastM / 1440), guard = 0;
+      ctx.fillStyle = '#9aa4b2';
+      while (guard++ < 60) {
+        const x = xl(t2l(t * 60)); if (x == null || x > ps.pw - 14) break;
+        if (x > x0 + 28) { const dk = Math.floor(t / 1440); ctx.fillText(tlabel(t * 60, dk !== prevDay), x, ps.ph + 14); prevDay = dk; }
+        t += unit;
+      }
+    }
+    // own crosshair readout while a drawing is selected / a tool is active, and over the empty future area
+    if (showXh() && mx >= 0 && mx <= ps.pw && my >= 0 && my <= ps.ph) {
+      const l = chart.timeScale().coordinateToLogical(mx), p = series.coordinateToPrice(my);
+      ctx.save(); ctx.strokeStyle = 'rgba(154,164,178,.55)'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(Math.round(mx) + .5, 0); ctx.lineTo(Math.round(mx) + .5, ps.ph); ctx.moveTo(0, Math.round(my) + .5); ctx.lineTo(ps.pw, Math.round(my) + .5); ctx.stroke(); ctx.restore();
+      const pill = (txt, cx, cy) => { const w = ctx.measureText(txt).width + 12; ctx.fillStyle = '#363c4e'; ctx.fillRect(cx - w / 2, cy - 9, w, 18); ctx.fillStyle = '#e6edf3'; ctx.fillText(txt, cx, cy); };
+      if (l != null) { const lab = tlabel(l2t(l), true); const w = ctx.measureText(lab).width + 12; pill(lab, Math.max(w / 2, Math.min(ps.pw - w / 2, mx)), ps.ph + 14); }
+      if (p != null) pill(p.toFixed(2), ps.pw + (ps.w - ps.pw) / 2, my);
+    }
   }
   function ovLoop() {
     ovRaf = 0;
     if (!chart || !series || !S || !$('#ov')) return;
     try {
       const lr = chart.timeScale().getVisibleLogicalRange(), n = HIST.length, c = n ? HIST[n - 1].close : 0, w = $('#chartwrap'), man = isManual();
+      if (!man && !series.priceScale().options().autoScale) { man = true; viewTouched = true; }
       const ab = $('#c_auto'); if (ab) ab.classList.toggle('on', !man);
-      const sig = [lr ? lr.from.toFixed(3) + lr.to.toFixed(3) : '', series.priceToCoordinate(c), series.priceToCoordinate(c + 10), S.cur, n, w.clientWidth, w.clientHeight, dVer, dSel, S.tf, S.hideMk ? 1 : 0].join('|');
+      const sig = [lr ? lr.from.toFixed(3) + lr.to.toFixed(3) : '', series.priceToCoordinate(c), series.priceToCoordinate(c + 10), S.cur, n, w.clientWidth, w.clientHeight, dVer, dSel, S.tf, S.hideMk ? 1 : 0, showXh() ? Math.round(mx) + ',' + Math.round(my) : ''].join('|');
       if (sig !== ovSig) { ovSig = sig; ovDraw(); }
     } catch (e) {}
     ovRaf = requestAnimationFrame(ovLoop);
@@ -1511,26 +1544,28 @@
     }, true);
     if (!docBound) {
       docBound = true;
-      document.addEventListener('pointermove', (e) => { if (gs && (e.buttons & 1) && Math.abs(e.clientY - gs.y) > 3) { gs = null; if (chart && !isManual()) setManual(true); } });
+      document.addEventListener('pointermove', (e) => { if (gs && (e.buttons & 1) && Math.abs(e.clientY - gs.y) > 3) { gs = null; viewTouched = true; } });
       document.addEventListener('pointerup', () => { gs = null; });
     }
+    wrap.addEventListener('pointermove', (e) => { const q = localXY(e); mx = q.x; my = q.y; }, true);
+    wrap.addEventListener('pointerleave', () => { mx = null; my = null; }, true);
     // wheel over the price axis: zoom the price scale (shift = pan up/down)
     wrap.addEventListener('wheel', (e) => {
       if (!chart || !series) return;
       const r = wrap.getBoundingClientRect(); let pw = 56; try { pw = chart.priceScale('right').width(); } catch (x2) {}
       if (e.clientX - r.left < r.width - pw) { viewTouched = true; return; }
       e.preventDefault(); e.stopPropagation(); viewTouched = true;
-      const dy = Math.max(-200, Math.min(200, e.deltaY));
+      const dy = Math.max(-60, Math.min(60, e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1)));
       if (isManual()) {
         const pr = getPR(), top = pr.top, bot = pr.bot;
         if (top != null && bot != null) {
           let c = (top + bot) / 2, hh = (top - bot) / 2;
-          if (e.shiftKey) c -= dy * 0.0008 * (top - bot); else hh *= Math.exp(dy * 0.0025);
+          if (e.shiftKey) c -= dy * 0.0008 * (top - bot); else hh *= Math.exp(dy * 0.0016);
           try { series.priceScale().setVisibleRange({ from: c - hh, to: c + hh }); } catch (x3) {}
         }
       } else {
         if (e.shiftKey) PZ.off = Math.max(-3, Math.min(3, PZ.off - dy * 0.0008));
-        else PZ.k = Math.max(0.15, Math.min(12, PZ.k * Math.exp(dy * 0.0025)));
+        else PZ.k = Math.max(0.15, Math.min(12, PZ.k * Math.exp(dy * 0.0016)));
         series.priceScale().applyOptions({ autoScale: true });
       }
       setDirty();
@@ -1833,7 +1868,7 @@
   // ---------- trade bar / lines ----------
   let lineObjs = {}, trackId = 0, drag = null;
   const isSetup = (t) => S.cur <= (t.i0 == null ? -1 : t.i0);
-  function refit() { if (man) return; try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
+  function refit() { try { if (!man && series && !series.priceScale().options().autoScale) { man = true; viewTouched = true; } } catch (e) {} if (man) return; try { series.priceScale().applyOptions({ autoScale: true }); } catch (e) {} }
 
   function drawLines() {
     if (!series) return;
