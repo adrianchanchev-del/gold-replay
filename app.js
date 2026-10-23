@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.21.3', BUILD = 'gr-v35';
+  const APP_VERSION = '0.21.4', BUILD = 'gr-v36';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -1902,14 +1902,14 @@
     const cn = $('#h_cnt'); if (cn) cn.textContent = S.dayTrades + '/' + P.plan.risk.maxTrades;
     const masked = S.pending && !S.pending.check, DOT = '\u2022\u2022\u2022\u2022';
     const put = (id, txt, v) => { const el = $('#' + id); if (!el) return; el.textContent = txt; el.className = v == null || Math.abs(v) < 0.005 ? '' : (v > 0 ? 'up' : 'dn'); };
-    const eq = equity(), sg = (v) => (v >= 0 ? '+' : '') + fmt(v), hh = accHist(), rs = avgROf(hh.s), rd = avgROf(hh.d), ac = AC(), plBase = ac ? ac.base : S.startBal;
+    const eq = equity(), sg = (v) => (v >= 0 ? '+' : '') + fmt(v), hh = accHist(), ss = dayHist().s, rs = avgROf(ss), rd = avgROf(hh.d), ac = AC(), plBase = S.startBal;
     const rt = (v) => (v == null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(2) + 'R');
     $('#h_bal').textContent = masked ? DOT : fmt(S.balance);
     put('h_eq', masked ? DOT : fmt(eq), masked ? null : eq - S.balance);
     put('h_pnl', masked ? DOT : sg(eq - plBase), masked ? null : eq - plBase);
     if (ac && $('#h_dd')) { const rm = ddRoom(ac, eq); put('h_dd', masked ? DOT : (rm.d != null ? fmt(rm.d) : '--'), null); put('h_mdd', masked ? DOT : (rm.m != null ? fmt(rm.m) : '--'), null); }
     put('h_dpnl', masked ? DOT : sg(eq - S.dayStartBal), masked ? null : eq - S.dayStartBal);
-    put('h_wr', wrOf(hh.s)); put('h_dwr', wrOf(hh.d));
+    put('h_wr', wrOf(ss)); put('h_dwr', wrOf(hh.d));
     put('h_rr', rt(rs), rs); put('h_drr', rt(rd), rd);
     acctChip();
     if (S.open) updateOpenPanel();
