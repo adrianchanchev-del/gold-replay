@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.20.3', BUILD = 'gr-v30';
+  const APP_VERSION = '0.20.4', BUILD = 'gr-v31';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -1565,20 +1565,26 @@
       const r = wrap.getBoundingClientRect(); let pw = 56; try { pw = chart.priceScale('right').width(); } catch (x2) {}
       if (e.clientX - r.left < r.width - pw) { viewTouched = true; return; }
       e.preventDefault(); e.stopPropagation(); viewTouched = true;
-      const dy = Math.max(-60, Math.min(60, e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1)));
-      if (isManual()) {
-        const pr = getPR(), top = pr.top, bot = pr.bot;
-        if (top != null && bot != null) {
-          let c = (top + bot) / 2, hh = (top - bot) / 2;
-          if (e.shiftKey) c -= dy * 0.0008 * (top - bot); else hh *= Math.exp(dy * 0.0016);
-          try { series.priceScale().setVisibleRange({ from: c - hh, to: c + hh }); } catch (x3) {}
+      // mouse wheel = big rare clicks; trackpad = many tiny events plus momentum. Accumulate and apply once per frame.
+      const raw = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1);
+      const pad = e.deltaMode === 0 && Math.abs(e.deltaY) < 50 && !Number.isInteger(e.deltaY / 100);
+      wAcc.dy += Math.max(-40, Math.min(40, raw)) * (pad ? 0.35 : 1); wAcc.shift = e.shiftKey;
+      if (!wAcc.raf) wAcc.raf = requestAnimationFrame(() => {
+        wAcc.raf = 0; const dy = Math.max(-40, Math.min(40, wAcc.dy)); wAcc.dy = 0; if (!chart || !series || Math.abs(dy) < 0.05) return;
+        if (isManual()) {
+          const pr = getPR(), top = pr.top, bot = pr.bot;
+          if (top != null && bot != null) {
+            let c = (top + bot) / 2, hh = (top - bot) / 2;
+            if (wAcc.shift) c -= dy * 0.0008 * (top - bot); else hh *= Math.exp(dy * 0.0016);
+            try { series.priceScale().setVisibleRange({ from: c - hh, to: c + hh }); } catch (x3) {}
+          }
+        } else {
+          if (wAcc.shift) PZ.off = Math.max(-3, Math.min(3, PZ.off - dy * 0.0008));
+          else PZ.k = Math.max(0.15, Math.min(12, PZ.k * Math.exp(dy * 0.0016)));
+          series.priceScale().applyOptions({ autoScale: true });
         }
-      } else {
-        if (e.shiftKey) PZ.off = Math.max(-3, Math.min(3, PZ.off - dy * 0.0008));
-        else PZ.k = Math.max(0.15, Math.min(12, PZ.k * Math.exp(dy * 0.0016)));
-        series.priceScale().applyOptions({ autoScale: true });
-      }
-      setDirty();
+        setDirty();
+      });
     }, { capture: true, passive: false });
     wrap.addEventListener('pointerdown', (e) => { touchy = e.pointerType !== 'mouse'; }, true);
     // right-click menu
@@ -1806,6 +1812,7 @@
     const dk = Math.floor(E.t(S.cur) / 1440);
     if (dk !== S.dayKey) { S.dayKey = dk; S.dayStartBal = S.balance; S.dayTrades = 0; acctDay(); }
   }
+  const wAcc = { dy: 0, shift: false, raf: 0 };
   let trimView = null;
   function setDataKeep() { const v = trimView || captureView(); trimView = null; series.setData(HIST); if (v) applyView(v); }
   function sync(crossed, stepped, trimmed) {
