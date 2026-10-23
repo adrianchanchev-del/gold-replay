@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.21.4', BUILD = 'gr-v36';
+  const APP_VERSION = '0.21.5', BUILD = 'gr-v37';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -299,8 +299,7 @@
     $('#s_day').onchange = () => { selDay = +$('#s_day').value; drawSess(); };
     $('#s_rand').onclick = () => {
       const opts = []; days.forEach((d) => SESSIONS.forEach((s, i) => { if (startIdx(d, s[1]) >= 0) opts.push([d, i]); }));
-      const a2 = curAcct(), ok2 = a2 && a2.lastT != null ? opts.filter((o) => startIdx(o[0], SESSIONS[o[1]][1]) >= 0 && E.t(startIdx(o[0], SESSIONS[o[1]][1])) >= a2.lastT) : opts;
-      if (!ok2.length) { toast('No later session left for this account'); return; }
+      const ok2 = opts;
       const pick = ok2[Math.floor(Math.random() * ok2.length)]; selDay = pick[0]; selSess = pick[1]; begin();
     };
     $('#s_go').onclick = begin;
@@ -312,7 +311,6 @@
       if (idx < 0) { toast('No data for that session'); return; }
       const t = E.t(idx);
       if (a1 && a1.status !== 'active') { toast('This account is ' + a1.status + '. Start a new attempt first.'); return; }
-      if (a1 && a1.lastT != null && t < a1.lastT) { toast('This account is already at ' + fdate(a1.lastT).replace(' UTC', '') + '. Pick a later session.'); return; }
       S = P.session = { dv: DV, cur: idx, tf: (P.set && P.set.tf) || 15, vid: Date.now(), startBal: bal, balance: bal, trades: 0, open: null, dayKey: Math.floor(t / 1440), dayStartBal: bal, dayTrades: 0, startT: t, acct: a1 ? a1.id : null, alerts: [] };
       if (a1) {
         if (a1.stage === 'phase' && a1.phaseDay == null) a1.phaseDay = S.dayKey;
@@ -413,7 +411,7 @@
   }
   function acctClose(t) {
     const a = AC(); if (!a) return;
-    a.bal = S.balance; a.lastT = t.t1; a.lastDay = Math.floor(t.t1 / 1440);
+    a.bal = S.balance; a.lastT = Math.max(a.lastT || 0, t.t1); a.lastDay = Math.max(a.lastDay || 0, Math.floor(t.t1 / 1440));
     const dk = Math.floor(t.t1 / 1440), c = a.cfg || {}; let counted = t.pnl;
     if (a.type === 'funded' && c.minHold && t.t1 - t.t0 < c.minHold && t.pnl > 0) { counted = 0; t.voided = true; pushAlert({ kind: 'info', title: 'Profit not counted', html: '<p>This trade was held under ' + c.minHold + ' min, so its profit does not count toward your target or consistency.</p>' }); }
     a.days[dk] = (a.days[dk] || 0) + counted; a.hw = Math.max(a.hw || 0, a.bal);
@@ -450,7 +448,7 @@
   function acctForce() {
     const a = AC(); if (!a || a.status !== 'active') return null;
     const t = E.t(S.cur), c = a.cfg || {}, eq = equity();
-    a.hw = Math.max(a.hw || 0, eq); a.lastT = t; a.lastDay = Math.floor(t / 1440);
+    a.hw = Math.max(a.hw || 0, eq); a.lastT = Math.max(a.lastT || 0, t); a.lastDay = Math.max(a.lastDay || 0, Math.floor(t / 1440));
     if (!S.open) return null;
     if (breachReason(a, eq) || a.timeUp) return 'BREACH';
     if (c.noWeekend) { const d = dowOf(t), m = t % 1440; if ((d === 5 && m >= 1290) || d === 6) return 'WEEKEND'; }
