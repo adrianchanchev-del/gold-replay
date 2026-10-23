@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.21.2', BUILD = 'gr-v34';
+  const APP_VERSION = '0.21.3', BUILD = 'gr-v35';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -683,7 +683,7 @@
     $('#view').innerHTML = '<div class="rp">' +
       '<div class="top">' +
       '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span><span id="h_acct" class="stag acc" style="display:none"></span><span class="trc">Trades <b id="h_cnt"></b></span></div>' +
-      '<div class="stats4' + (hasDD() ? ' s5' : '') + '"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Equity <u id="h_eq"></u></em></span><span class="kv"><i>P&amp;L</i><b id="h_pnl"></b><em class="sub">Return <u id="h_dpnl"></u></em></span>' + (hasDD() ? '<span class="kv"><i>DD room</i><b id="h_dd"></b><em class="sub">Max <u id="h_mdd"></u></em></span>' : '') + '<span class="kv"><i>Win rate</i><b id="h_wr"></b><em class="sub">W-L <u id="h_dwr"></u></em></span><span class="kv"><i>Avg R</i><b id="h_rr"></b><em class="sub">Total <u id="h_drr"></u></em></span></div></div>' +
+      '<div class="stats4' + (hasDD() ? ' s5' : '') + '"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Equity <u id="h_eq"></u></em></span><span class="kv"><i>P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span>' + (hasDD() ? '<span class="kv"><i>DD room</i><b id="h_dd"></b><em class="sub">Max <u id="h_mdd"></u></em></span>' : '') + '<span class="kv"><i>Win rate</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
       '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
       '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><div id="favis" class="favis"></div><div id="toolpanel" class="toolpanel"></div><div id="ctxm" class="ctxm"></div>' +
@@ -1908,9 +1908,9 @@
     put('h_eq', masked ? DOT : fmt(eq), masked ? null : eq - S.balance);
     put('h_pnl', masked ? DOT : sg(eq - plBase), masked ? null : eq - plBase);
     if (ac && $('#h_dd')) { const rm = ddRoom(ac, eq); put('h_dd', masked ? DOT : (rm.d != null ? fmt(rm.d) : '--'), null); put('h_mdd', masked ? DOT : (rm.m != null ? fmt(rm.m) : '--'), null); }
-    put('h_dpnl', masked ? DOT : (S.startBal ? ((eq - S.startBal) / S.startBal * 100 >= 0 ? '+' : '') + ((eq - S.startBal) / S.startBal * 100).toFixed(2) + '%' : '--'), masked ? null : eq - S.startBal);
-    put('h_wr', wrOf(hh.s)); put('h_dwr', hh.s.filter((h) => h.pnl > 0).length + '-' + hh.s.filter((h) => h.pnl < 0).length);
-    put('h_rr', rt(rs), rs); { const tr = hh.s.reduce((x, h) => x + h.r, 0); put('h_drr', hh.s.length ? rt(tr) : '--', hh.s.length ? tr : null); }
+    put('h_dpnl', masked ? DOT : sg(eq - S.dayStartBal), masked ? null : eq - S.dayStartBal);
+    put('h_wr', wrOf(hh.s)); put('h_dwr', wrOf(hh.d));
+    put('h_rr', rt(rs), rs); put('h_drr', rt(rd), rd);
     acctChip();
     if (S.open) updateOpenPanel();
   }
