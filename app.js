@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.21.0', BUILD = 'gr-v32';
+  const APP_VERSION = '0.21.1', BUILD = 'gr-v33';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -1727,6 +1727,7 @@
     S.hist = S.hist || [];
     const rec = { id: t.id, t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc ? sc.total : null, max: sc ? sc.max : null, onplan: sc ? !sc.mistake : null };
     S.hist.push(rec);
+    P.tlog = P.tlog || []; if (!P.tlog.some((x) => x.id === rec.id)) { P.tlog.push(Object.assign({}, rec, { acct: S.acct || null, mode: S.jmode || 'trade' })); if (P.tlog.length > 5000) P.tlog.shift(); }
     const ac = AC(); if (ac) { ac.tr = ac.tr || []; if (!ac.tr.some((x) => x.id === rec.id)) ac.tr.push({ id: rec.id, t1: rec.t1, pnl: rec.pnl, r: rec.r }); }
     refreshMarkers();
   }
@@ -2122,6 +2123,7 @@
     P.journal.push({ t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc.total, max: sc.max, bonus: sc.bonus, honesty: sc.honesty, verdict: sc.verdict, said, level: sc.mistake ? 1 : 2,
       flags: { incomplete: sc.adherence.comp < 1, risk: !sc.adherence.riskOk, rr: !sc.adherence.rrOk, limits: !sc.adherence.limitsOk, widened: !sc.adherence.stopOk, manual: t.reason === 'MANUAL' }, note, why: t.note, comp: sc.adherence.comp });
     if (P.journal.length > 600) P.journal.shift();
+    { const tl = (P.tlog || []).find((x) => x.id === t.id); if (tl) { const jj = P.journal[P.journal.length - 1]; Object.assign(tl, { score: jj.score, max: jj.max, level: jj.level, flags: jj.flags, verdict: jj.verdict, honesty: jj.honesty, mode: 'trade' }); } }
     P.sessionsDone = P.sessionsDone || 0; saveP();
     const lvAfter = E.levelFor(P.xp);
     const vtxt = { clean: 'No mistake, and you said so. That is the most honest result there is.', accountable: 'You made a mistake and owned it. That is how it gets fixed.', overclaimed: 'You said you followed the plan, but the log says otherwise. That gap is where accounts get blown.', harsh: 'You did nothing wrong but marked yourself down. Be accurate, not harsh.' }[sc.verdict];
@@ -2156,13 +2158,29 @@
 
   // ---------- stats ----------
   const STT = [['journal', 'Journal'], ['quick', 'Quick notes'], ['reviews', 'Reviews'], ['data', 'Data']];
+  function ensureTlog() {
+    P.tlog = P.tlog || [];
+    if (!P.tlogInit) { P.tlogInit = 1; (P.journal || []).forEach((j) => { if (!P.tlog.some((x) => x.t0 === j.t0 && x.t1 === j.t1)) P.tlog.push(Object.assign({}, j, { id: 'j' + j.t0 + '_' + j.t1, acct: null, mode: 'trade' })); }); P.tlog.sort((a, b) => a.t1 - b.t1); }
+    if (S && S.hist) S.hist.forEach((h) => { if (!P.tlog.some((x) => x.id === h.id)) P.tlog.push(Object.assign({}, h, { acct: S.acct || null, mode: S.jmode || 'trade' })); });
+  }
+  function dataFilter() { const f = (P.set && P.set.dfil) || {}; return { mode: f.mode || 'all', acct: f.acct || 'all', sess: f.sess || 'all' }; }
+  function filterBar(all) {
+    const f = dataFilter(), accts = [['all', 'All accounts'], ['none', 'Practice']].concat((P.accts || []).map((a) => [a.id, a.name]));
+    const sel = (k, opts) => '<select data-df="' + k + '">' + opts.map((o) => '<option value="' + o[0] + '"' + (f[k] === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select>';
+    return '<div class="fbar">' + sel('mode', [['all', 'All journal modes'], ['trade', 'After every trade'], ['end', 'After the session']]) + sel('acct', accts) + sel('sess', [['all', 'All sessions'], ['Asia', 'Asia'], ['London', 'London'], ['New York', 'New York']]) + '</div>';
+  }
+  function filteredTrades() {
+    ensureTlog(); const f = dataFilter();
+    return P.tlog.filter((j) => (f.mode === 'all' || (j.mode || 'trade') === f.mode) && (f.acct === 'all' || (f.acct === 'none' ? !j.acct : j.acct === f.acct)) && (f.sess === 'all' || sessName(j.t0) === f.sess));
+  }
   function renderStats() {
     if (S && S.notes) { P.qnotes = P.qnotes || []; S.notes.forEach((n) => { if (!n.g) { n.g = 1; n.at = n.at || Date.now(); n.vid = S.vid; P.qnotes.push(n); } }); }
-    const st = (P.set && P.set.stTab) || 'journal', J = P.journal || [];
+    const st = (P.set && P.set.stTab2) || 'data', J = P.journal || [];
     let h = '<div class="page"><div class="itabs">' + STT.map((x) => '<button data-stt="' + x[0] + '" class="' + (st === x[0] ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>';
-    if (st === 'journal') h += statsJournal(J); else if (st === 'quick') h += statsQuick(); else if (st === 'reviews') h += statsReviews(J); else h += statsData(J);
+    if (st === 'journal') h += statsJournal(J); else if (st === 'quick') h += statsQuick(); else if (st === 'reviews') h += statsReviews(J); else h += filterBar() + statsData(filteredTrades());
     $('#view').innerHTML = h + '</div>';
-    document.querySelectorAll('[data-stt]').forEach((b) => (b.onclick = () => { P.set.stTab = b.dataset.stt; saveP(); renderStats(); }));
+    document.querySelectorAll('[data-stt]').forEach((b) => (b.onclick = () => { P.set.stTab2 = b.dataset.stt; saveP(); renderStats(); }));
+    document.querySelectorAll('[data-df]').forEach((el) => (el.onchange = () => { P.set.dfil = Object.assign(dataFilter(), { [el.dataset.df]: el.value }); saveP(); renderStats(); }));
     document.querySelectorAll('[data-ji]').forEach((el) => (el.onclick = () => editJournal(+el.dataset.ji)));
     document.querySelectorAll('[data-qd]').forEach((el) => (el.onclick = () => { const k = +el.dataset.qd, n = P.qnotes[k]; if (!n) return; if (confirm('Delete this note?')) { P.qnotes.splice(k, 1); if (S && S.notes) S.notes = S.notes.filter((x) => x !== n && x.at !== n.at); saveP(); renderStats(); } }));
   }
@@ -2187,7 +2205,7 @@
   function statsData(J) {
     const n = J.length, lv = E.levelFor(P.xp), lo = E.xpForLevel(lv), hi = E.xpForLevel(lv + 1);
     let h = '<div class="card lvl"><div class="lvn">Level ' + lv + '</div><div class="bar"><i style="width:' + Math.min(100, (P.xp - lo) / (hi - lo) * 100) + '%"></i></div><div class="muted sm">' + P.xp + ' XP &middot; clean streak ' + P.streak + ' (best ' + P.bestStreak + ')</div></div>';
-    if (!n) return h + '<div class="card muted">Statistics appear once you have reviewed trades.</div>';
+    if (!n) return h + '<div class="card muted">No trades match these filters.</div>';
     const sum = (a, f) => a.reduce((x, y) => x + f(y), 0), W = J.filter((j) => j.pnl > 0), Lo = J.filter((j) => j.pnl < 0);
     const gw = sum(W, (j) => j.pnl), gl = Math.abs(sum(Lo, (j) => j.pnl)), net = sum(J, (j) => j.pnl), tr = sum(J, (j) => j.r);
     const aw = W.length ? gw / W.length : 0, al = Lo.length ? gl / Lo.length : 0, awR = W.length ? sum(W, (j) => j.r) / W.length : 0, alR = Lo.length ? sum(Lo, (j) => j.r) / Lo.length : 0;
@@ -2210,10 +2228,10 @@
     const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], NM = { SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed by hand', BREACH: 'Account rules', WEEKEND: 'Weekend close', STOPOUT: 'Margin stop-out' };
     h += grp('By direction', (j) => (j.dir > 0 ? 'Long' : 'Short'), ['Long', 'Short']) + grp('By session (entry time)', (j) => sessName(j.t0), ['Asia', 'London', 'New York', 'Late']) +
       grp('By weekday', (j) => DOW[new Date(j.t0 * 60000).getUTCDay()], ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sun', 'Sat']) + grp('By how it ended', (j) => NM[j.reason] || j.reason) +
-      grp('By plan adherence', (j) => (j.level === 2 ? 'On plan' : 'Off plan'), ['On plan', 'Off plan']) + grp('By result size', (j) => (j.r <= -1.05 ? 'Worse than -1R' : j.r < 0 ? '0 to -1R' : j.r < 1 ? '0 to 1R' : j.r < 2 ? '1R to 2R' : '2R or more'), ['Worse than -1R', '0 to -1R', '0 to 1R', '1R to 2R', '2R or more']);
-    const sc = J.filter((j) => j.max); const ad = n ? J.filter((j) => j.level === 2).length : 0;
+      grp('By plan adherence', (j) => (!j.max ? 'Not scored' : j.level === 2 ? 'On plan' : 'Off plan'), ['On plan', 'Off plan', 'Not scored']) + grp('By result size', (j) => (j.r <= -1.05 ? 'Worse than -1R' : j.r < 0 ? '0 to -1R' : j.r < 1 ? '0 to 1R' : j.r < 2 ? '1R to 2R' : '2R or more'), ['Worse than -1R', '0 to -1R', '0 to 1R', '1R to 2R', '2R or more']);
+    const sc = J.filter((j) => j.max); const scd = J.filter((j) => j.max), ad = scd.filter((j) => j.level === 2).length;
     const leaks = [['Skipped checklist items', J.filter((j) => j.flags && j.flags.incomplete).length], ['Risked more than plan', J.filter((j) => j.flags && j.flags.risk).length], ['Took below-minimum RR', J.filter((j) => j.flags && j.flags.rr).length], ['Broke daily limits', J.filter((j) => j.flags && j.flags.limits).length], ['Widened a stop', J.filter((j) => j.flags && j.flags.widened).length], ['Closed manually', J.filter((j) => j.flags && j.flags.manual).length], ['Overclaimed in review', J.filter((j) => j.verdict === 'overclaimed').length]].sort((a, b) => b[1] - a[1]);
-    h += '<div class="card"><b>Discipline</b>' + rr('Fully on plan', Math.round(ad / n * 100) + '%') + rr('Average process score', sc.length ? Math.round(sum(sc, (j) => j.score / j.max * 100) / sc.length) + '%' : '--') + '<h4>Where you leak</h4>' + leaks.map((l) => rr(l[0], l[1], l[1] ? 'dn' : 'up')).join('') + '</div>';
+    h += '<div class="card"><b>Discipline</b>' + rr('Fully on plan (scored trades: ' + scd.length + ')', scd.length ? Math.round(ad / scd.length * 100) + '%' : '--') + rr('Average process score', sc.length ? Math.round(sum(sc, (j) => j.score / j.max * 100) / sc.length) + '%' : '--') + '<h4>Where you leak</h4>' + leaks.map((l) => rr(l[0], l[1], l[1] ? 'dn' : 'up')).join('') + '</div>';
     const ses = P.sessLog || []; if (ses.length) { const sw = ses.filter((x) => x.st.net > 0).length; h += '<div class="card"><b>Sessions</b>' + rr('Sessions played', ses.length) + rr('Profitable sessions', Math.round(sw / ses.length * 100) + '%') + rr('Best / worst session', fmt(Math.max.apply(null, ses.map((x) => x.st.net))) + ' / ' + fmt(Math.min.apply(null, ses.map((x) => x.st.net)))) + '</div>'; }
     return h;
   }
