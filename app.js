@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.20.2', BUILD = 'gr-v29';
+  const APP_VERSION = '0.20.3', BUILD = 'gr-v30';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -1350,7 +1350,8 @@
     const d = new Date(tsec * 1000), hm = String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
     return withDate ? d.getUTCDate() + ' ' + MON[d.getUTCMonth()] + ' ' + hm : hm;
   }
-  const showXh = () => mx != null && ((dTool !== 'cur' || dGrab) || (HIST.length && mx > xl(HIST.length - 1) + 2));
+  const ovOwns = () => dTool !== 'cur' || dGrab;
+  const showXh = () => mx != null && (ovOwns() || (HIST.length && mx > xl(HIST.length - 1) + 2));
   function ovExtras(ctx, ps) {
     const n = HIST.length; if (!n) return;
     ctx.font = '11px -apple-system,Segoe UI,Roboto,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1369,11 +1370,12 @@
     // own crosshair readout while a drawing is selected / a tool is active, and over the empty future area
     if (showXh() && mx >= 0 && mx <= ps.pw && my >= 0 && my <= ps.ph) {
       const l = chart.timeScale().coordinateToLogical(mx), p = series.coordinateToPrice(my);
-      ctx.save(); ctx.strokeStyle = 'rgba(154,164,178,.55)'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
-      ctx.beginPath(); ctx.moveTo(Math.round(mx) + .5, 0); ctx.lineTo(Math.round(mx) + .5, ps.ph); ctx.moveTo(0, Math.round(my) + .5); ctx.lineTo(ps.pw, Math.round(my) + .5); ctx.stroke(); ctx.restore();
+      const own = ovOwns();
+      if (own) { ctx.save(); ctx.strokeStyle = 'rgba(154,164,178,.55)'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(Math.round(mx) + .5, 0); ctx.lineTo(Math.round(mx) + .5, ps.ph); ctx.moveTo(0, Math.round(my) + .5); ctx.lineTo(ps.pw, Math.round(my) + .5); ctx.stroke(); ctx.restore(); }
       const pill = (txt, cx, cy) => { const w = ctx.measureText(txt).width + 12; ctx.fillStyle = '#363c4e'; ctx.fillRect(cx - w / 2, cy - 9, w, 18); ctx.fillStyle = '#e6edf3'; ctx.fillText(txt, cx, cy); };
       if (l != null) { const lab = tlabel(l2t(l), true); const w = ctx.measureText(lab).width + 12; pill(lab, Math.max(w / 2, Math.min(ps.pw - w / 2, mx)), ps.ph + 14); }
-      if (p != null) pill(p.toFixed(2), ps.pw + (ps.w - ps.pw) / 2, my);
+      if (p != null && own) pill(p.toFixed(2), ps.pw + (ps.w - ps.pw) / 2, my);
     }
   }
   function ovLoop() {
@@ -1804,7 +1806,8 @@
     const dk = Math.floor(E.t(S.cur) / 1440);
     if (dk !== S.dayKey) { S.dayKey = dk; S.dayStartBal = S.balance; S.dayTrades = 0; acctDay(); }
   }
-  function setDataKeep() { const v = captureView(); series.setData(HIST); if (v) applyView(v); }
+  let trimView = null;
+  function setDataKeep() { const v = trimView || captureView(); trimView = null; series.setData(HIST); if (v) applyView(v); }
   function sync(crossed, stepped, trimmed) {
     if (!stepped || !series) return;
     if (trimmed) setDataKeep();
@@ -1817,7 +1820,7 @@
       S.cur++; stepped++; applyEnv();
       S.run = E.mergeBar(S.run, S.tf, S.cur);
       const last = HIST[HIST.length - 1];
-      if (!last || last.time !== S.run.time) { HIST.push(S.run); crossed = true; if (HIST.length > 3000) { HIST.splice(0, 500); trimmed = true; } } else HIST[HIST.length - 1] = S.run;
+      if (!last || last.time !== S.run.time) { HIST.push(S.run); crossed = true; if (HIST.length > 3000) { if (!trimView) trimView = captureView(); HIST.splice(0, 500); trimmed = true; } } else HIST[HIST.length - 1] = S.run;
       if (series && !trimmed) series.update(S.run);
       dayRoll();
       if (S.open) {
