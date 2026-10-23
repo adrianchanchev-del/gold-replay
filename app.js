@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.20.1', BUILD = 'gr-v28';
+  const APP_VERSION = '0.20.2', BUILD = 'gr-v29';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -1540,13 +1540,21 @@
     // dragging the plot or the price axis vertically unlocks the price scale (stays until you reset it)
     wrap.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('#dtb,#favis,#toolpanel,.island,.hd,.spw,#c_auto,#ctxm') || e.target === ov) return;
-      gs = { y: e.clientY, x: e.clientX }; viewTouched = true;
+      viewTouched = true;
+      const rr = wrap.getBoundingClientRect(); let pw2 = 56; try { pw2 = chart.priceScale('right').width(); } catch (x2) {}
+      const onAxis = e.clientX - rr.left >= rr.width - pw2 && e.clientY - rr.top < rr.height - 26;
+      gs = onAxis ? { y: e.clientY, x: e.clientX } : null;
     }, true);
     if (!docBound) {
       docBound = true;
-      document.addEventListener('pointermove', (e) => { if (gs && (e.buttons & 1) && Math.abs(e.clientY - gs.y) > 3) { gs = null; viewTouched = true; } });
+      document.addEventListener('pointermove', (e) => { if (gs && (e.buttons & 1) && Math.abs(e.clientY - gs.y) > 3) { gs = null; viewTouched = true; if (chart && !isManual()) { man = true; } } });
       document.addEventListener('pointerup', () => { gs = null; });
     }
+    // double-click the price axis: back to auto-fit (TradingView)
+    wrap.addEventListener('dblclick', (e) => {
+      const rr = wrap.getBoundingClientRect(); let pw2 = 56; try { pw2 = chart.priceScale('right').width(); } catch (x2) {}
+      if (e.clientX - rr.left >= rr.width - pw2 && e.clientY - rr.top < rr.height - 26 && chart) { setManual(false); series.priceScale().applyOptions({ autoScale: true }); setDirty(); }
+    }, true);
     wrap.addEventListener('pointermove', (e) => { const q = localXY(e); mx = q.x; my = q.y; }, true);
     wrap.addEventListener('pointerleave', () => { mx = null; my = null; }, true);
     // wheel over the price axis: zoom the price scale (shift = pan up/down)
