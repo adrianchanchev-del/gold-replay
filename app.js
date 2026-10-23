@@ -1399,7 +1399,6 @@
     const ph = plotSize().ph; return { top: series.coordinateToPrice(ph * 0.08), bot: series.coordinateToPrice(ph * 0.86) };
   }
 
-  window.__dbg = () => ({ man, top: getPR().top, bot: getPR().bot, as: series.priceScale().options().autoScale });
   const isManual = () => man;
   function captureView() {
     if (!chart || !series || !S || !HIST.length) return null;
