@@ -23,8 +23,25 @@
   let W = null, wStep = 0; // wizard
 
   function loadP() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
-  function saveP() { try { if (frozen) return; if (P && !noStamp) P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); if (window.Sync) window.Sync.changed(false); } catch (e) {} }
+  function saveP() { try { if (frozen) return; trackDraws(); if (P && !noStamp) P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); if (window.Sync) window.Sync.changed(false); } catch (e) {} }
   let noStamp = false, frozen = false;
+  // drawing undo / redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z)
+  let uStack = [], rStack = [], uSnap = null, uVid = null, uQuiet = false;
+  function trackDraws() {
+    if (uQuiet || !S) return;
+    if (uVid !== S.vid) { uVid = S.vid; uStack = []; rStack = []; uSnap = JSON.stringify(S.draws || []); return; }
+    const s = JSON.stringify(S.draws || []);
+    if (s !== uSnap) { uStack.push(uSnap); if (uStack.length > 100) uStack.shift(); rStack = []; uSnap = s; }
+  }
+  function undoRedo(redo) {
+    if (!S || !chart) return;
+    trackDraws();
+    const from = redo ? rStack : uStack, to = redo ? uStack : rStack;
+    if (!from.length) { toast(redo ? 'Nothing to redo' : 'Nothing to undo'); return; }
+    to.push(uSnap); uSnap = from.pop(); S.draws = JSON.parse(uSnap);
+    dSel = null; dGrab = false; dDraft = null; uQuiet = true; try { saveP(); } finally { uQuiet = false; }
+    setDirty(); drawTb(); setOvMode();
+  }
   const IKEY = 'goldreplay.imgs';
   function loadImgs() { try { return JSON.parse(localStorage.getItem(IKEY)) || []; } catch (e) { return []; } }
   function saveImgs(a) { try { if (frozen) return false; localStorage.setItem(IKEY, JSON.stringify(a)); if (P) { P._m = Date.now(); localStorage.setItem(KEY, JSON.stringify(P)); } if (window.Sync) window.Sync.changed(true); return true; } catch (e) { toast('Storage full, remove a picture first'); return false; } }
@@ -687,6 +704,7 @@
       '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><div id="favis" class="favis"></div><div id="toolpanel" class="toolpanel"></div><div id="ctxm" class="ctxm"></div>' +
       '<div class="island"><div class="grip" data-grip="isl" title="Drag to move (double-click to reset)">' + UI.grip + '</div><div class="fxbar"><button id="c_play" class="pl">' + UI.play + '</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_cross" title="Crosshair">&#8982;</button><button id="c_end" class="endb">End</button></div></div></div></div>';
     if (!S.vid) S.vid = Date.now();
+    trackDraws();
     mountChart(); loadTF(savedView && savedView.key === S.vid ? savedView : null); drawTfBits(); drawTb(); drawFav(); bindDraw(); placeMovable('isl'); bindGrip($('.island .grip'), $('.island'), 'isl');
     $('#tf_menu').onclick = (e) => { e.stopPropagation(); $('#tf_panel').classList.toggle('on'); };
     $('#c_next').onclick = () => { pause(); nextCandle(); };
@@ -1686,6 +1704,7 @@
     const tg = e.target && e.target.tagName; if (/INPUT|TEXTAREA|SELECT/.test(tg || '')) return;
     const mo = $('#modal'); if (mo && mo.classList.contains('on')) return;
     if (e.key === 'Escape') { if (chart) { dDraft = null; dTool = 'cur'; dSel = null; dGrab = false; closeCtx(); const p = $('#toolpanel'); if (p) p.classList.remove('on'); setDirty(); drawTb(); drawFav(); setOvMode(); } return; }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === 'KeyZ' || e.code === 'KeyY') && S && tab === 'replay' && chart) { e.preventDefault(); undoRedo(e.code === 'KeyY' || e.shiftKey); return; }
     if (e.key === 'Enter' && dDraft && dDraft.n === 0) { e.preventDefault(); finishDraft(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && chart && dSel != null) { e.preventDefault(); delSel(); return; }
     const c = comboOf(e); if (!c) return;
