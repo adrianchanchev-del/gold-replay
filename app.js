@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.21.6', BUILD = 'gr-v38';
+  const APP_VERSION = '0.22.0', BUILD = 'gr-v39';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -1744,7 +1744,7 @@
     S.hist = S.hist || [];
     const rec = { id: t.id, t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc ? sc.total : null, max: sc ? sc.max : null, onplan: sc ? !sc.mistake : null };
     S.hist.push(rec);
-    P.tlog = P.tlog || []; if (!P.tlog.some((x) => x.id === rec.id)) { P.tlog.push(Object.assign({}, rec, { acct: S.acct || null, mode: S.jmode || 'trade' })); if (P.tlog.length > 5000) P.tlog.shift(); }
+    P.tlog = P.tlog || []; if (!P.tlog.some((x) => x.id === rec.id)) { P.tlog.push(Object.assign({}, rec, { acct: S.acct || null, mode: S.jmode || 'trade', sid: S.vid })); if (P.tlog.length > 5000) P.tlog.shift(); }
     const ac = AC(); if (ac) { ac.tr = ac.tr || []; if (!ac.tr.some((x) => x.id === rec.id)) ac.tr.push({ id: rec.id, t1: rec.t1, pnl: rec.pnl, r: rec.r }); }
     refreshMarkers();
   }
@@ -2166,7 +2166,7 @@
       closeModal();
       const st = sessStats(), prev = (P.sessLog || []).length ? P.sessLog[P.sessLog.length - 1].st : null;
       const fin = (notes) => statsModal(st, prev, () => {
-        P.sessLog = P.sessLog || []; P.sessLog.push({ st, notes, t0: S.startT, t1: E.t(S.cur) }); if (P.sessLog.length > 100) P.sessLog.shift();
+        P.sessLog = P.sessLog || []; P.sessLog.push({ st, notes, t0: S.startT, t1: E.t(S.cur), vid: S.vid, acct: S.acct || null, mode: S.jmode || 'trade' }); if (P.sessLog.length > 100) P.sessLog.shift();
         P.sessionsDone++; P.session = null; S = null; saveP(); closeModal(); showTab('replay');
       });
       if (S.jmode === 'end') reflectModal(fin); else fin(null);
@@ -2174,11 +2174,13 @@
   }
 
   // ---------- stats ----------
-  const STT = [['journal', 'Journal'], ['quick', 'Quick notes'], ['reviews', 'Reviews'], ['data', 'Data']];
+  const STT = [['journal', 'Journal'], ['quick', 'Quick notes'], ['reviews', 'Reviews'], ['data', 'Data'], ['sessions', 'Sessions']];
   function ensureTlog() {
     P.tlog = P.tlog || [];
     if (!P.tlogInit) { P.tlogInit = 1; (P.journal || []).forEach((j) => { if (!P.tlog.some((x) => x.t0 === j.t0 && x.t1 === j.t1)) P.tlog.push(Object.assign({}, j, { id: 'j' + j.t0 + '_' + j.t1, acct: null, mode: 'trade' })); }); P.tlog.sort((a, b) => a.t1 - b.t1); }
-    if (S && S.hist) S.hist.forEach((h) => { if (!P.tlog.some((x) => x.id === h.id)) P.tlog.push(Object.assign({}, h, { acct: S.acct || null, mode: S.jmode || 'trade' })); });
+    const SL = P.sessLog || [];
+    P.tlog.forEach((x) => { if (x.sid) return; const m = SL.filter((l) => x.t0 >= l.t0 && x.t1 <= l.t1 + 1); if (m.length === 1) x.sid = m[0].vid || ('t' + m[0].t0); });
+    if (S && S.hist) S.hist.forEach((h) => { if (!P.tlog.some((x) => x.id === h.id)) P.tlog.push(Object.assign({}, h, { acct: S.acct || null, mode: S.jmode || 'trade', sid: S.vid })); });
   }
   function dataFilter() { const f = (P.set && P.set.dfil) || {}; return { mode: f.mode || 'all', acct: f.acct || 'all', sess: f.sess || 'all' }; }
   function filterBar(all) {
@@ -2194,12 +2196,30 @@
     if (S && S.notes) { P.qnotes = P.qnotes || []; S.notes.forEach((n) => { if (!n.g) { n.g = 1; n.at = n.at || Date.now(); n.vid = S.vid; P.qnotes.push(n); } }); }
     const st = (P.set && P.set.stTab2) || 'data', J = P.journal || [];
     let h = '<div class="page"><div class="itabs">' + STT.map((x) => '<button data-stt="' + x[0] + '" class="' + (st === x[0] ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>';
-    if (st === 'journal') h += statsJournal(J); else if (st === 'quick') h += statsQuick(); else if (st === 'reviews') h += statsReviews(J); else h += filterBar() + statsData(filteredTrades());
+    if (st === 'journal') h += statsJournal(J); else if (st === 'quick') h += statsQuick(); else if (st === 'reviews') h += statsReviews(J); else if (st === 'sessions') h += statsSessions(); else h += filterBar() + statsData(filteredTrades());
     $('#view').innerHTML = h + '</div>';
     document.querySelectorAll('[data-stt]').forEach((b) => (b.onclick = () => { P.set.stTab2 = b.dataset.stt; saveP(); renderStats(); }));
+    document.querySelectorAll('[data-ss]').forEach((el) => (el.onclick = () => { P.set.sessSel = el.dataset.ss; saveP(); renderStats(); }));
+    const sb = $('#ss_back'); if (sb) sb.onclick = () => { P.set.sessSel = null; saveP(); renderStats(); };
     document.querySelectorAll('[data-df]').forEach((el) => (el.onchange = () => { P.set.dfil = Object.assign(dataFilter(), { [el.dataset.df]: el.value }); saveP(); renderStats(); }));
     document.querySelectorAll('[data-ji]').forEach((el) => (el.onclick = () => editJournal(+el.dataset.ji)));
     document.querySelectorAll('[data-qd]').forEach((el) => (el.onclick = () => { const k = +el.dataset.qd, n = P.qnotes[k]; if (!n) return; if (confirm('Delete this note?')) { P.qnotes.splice(k, 1); if (S && S.notes) S.notes = S.notes.filter((x) => x !== n && x.at !== n.at); saveP(); renderStats(); } }));
+  }
+  function sessList() {
+    ensureTlog(); const out = (P.sessLog || []).map((l) => ({ key: l.vid || ('t' + l.t0), t0: l.t0, t1: l.t1, acct: l.acct || null, mode: l.mode || 'trade', live: false }));
+    if (S) out.push({ key: S.vid, t0: S.startT, t1: E.t(S.cur), acct: S.acct || null, mode: S.jmode || 'trade', live: true });
+    return out.reverse();
+  }
+  function statsSessions() {
+    const L = sessList(), an = (id) => { const a = (P.accts || []).find((x) => x.id === id); return a ? a.name : 'Practice'; };
+    const sel = P.set.sessSel, cur = sel && L.find((x) => String(x.key) === String(sel));
+    if (cur) {
+      const T = P.tlog.filter((x) => String(x.sid) === String(cur.key));
+      return '<button class="btn ghost" id="ss_back" style="margin-bottom:8px">&larr; All sessions</button><div class="card"><b>' + fdate(cur.t0).slice(0, 16) + (cur.live ? ' (current)' : '') + '</b><div class="muted sm">' + esc(an(cur.acct)) + ' &middot; ' + (cur.mode === 'end' ? 'journal after session' : 'journal every trade') + ' &middot; ' + sessName(cur.t0) + '</div></div>' + statsData(T);
+    }
+    if (!L.length) return '<div class="card muted">No sessions yet.</div>';
+    return L.map((x) => { const T = P.tlog.filter((t) => String(t.sid) === String(x.key)), net = T.reduce((a, t) => a + t.pnl, 0), w = T.filter((t) => t.pnl > 0).length;
+      return '<div class="card jr" data-ss="' + esc(x.key) + '"><div class="jt"><b>' + fdate(x.t0).slice(0, 16) + (x.live ? ' &middot; current' : '') + '</b><span class="' + (net >= 0 ? 'up' : 'dn') + '">' + fmt(net) + '</span></div><div class="muted sm">' + esc(an(x.acct)) + ' &middot; ' + sessName(x.t0) + ' &middot; ' + T.length + ' trades' + (T.length ? ' &middot; ' + Math.round(w / T.length * 100) + '% WR' : '') + ' &middot; ' + (x.mode === 'end' ? 'after session' : 'every trade') + '</div></div>'; }).join('');
   }
   function statsJournal(J) {
     if (!J.length) return '<div class="card muted">No journal entries yet. They appear after each reviewed trade.</div>';
