@@ -279,8 +279,9 @@ html,body{position:fixed;top:0;left:0;right:0;bottom:0;height:auto;min-height:-w
 #app{bottom:calc(-1 * var(--bx,0px))!important}
 .nav{padding-bottom:calc(env(safe-area-inset-bottom) + var(--bx,0px))!important}
 
-/* v0.24: fullscreen chart -- hide the top stats row and the tab bar, keep the trade dock */
-body.fschart .top{display:none}
+/* v0.24: fullscreen chart -- hide only the topmost session/account row + the tab bar;
+   acc stats (.stats4), the toolbar (.tfrow, incl. the fullscreen button) and the trade dock stay */
+body.fschart .info2{display:none}
 body.fschart .dock .nav{display:none}
 body.fschart .dock{padding-bottom:calc(env(safe-area-inset-bottom) + var(--bx,0px))}
 #c_fs.on{color:#e6c14b}
