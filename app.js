@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.24.3', BUILD = 'gr-v45';
+  const APP_VERSION = '0.24.4', BUILD = 'gr-v46';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -522,7 +522,7 @@
   function endModeCoins() {
     const H = S.hist || [], W = H.filter((h) => h.pnl > 0); if (!W.length) return { n: 0, mult: 1, wr: 0, ar: 0, total: 0 };
     const wr = W.length / H.length * 100, ar = W.reduce((x, h) => x + h.r, 0) / W.length;
-    const mult = Math.round((1 + wr * 0.01 + ar / 0.02 * 0.01) * 100) / 100;
+    const mult = Math.round((1 + wr * 0.01 + Math.max(0, ar - 1) / 0.02 * 0.01) * 100) / 100;
     return { n: W.length, mult, wr, ar, total: Math.round(W.length * mult * 100) / 100 };
   }
   function ensureEcon() {
