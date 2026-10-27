@@ -1,4 +1,4 @@
-// Retest service worker. Build: gr-v40
+// Retest service worker. Build: gr-v41
 const V='gr-v41';
 const CACHE = V;
 const ASSETS = ['./', 'index.html', 'app.js', 'engine.js', 'sync.js', 'patterns.js', 'style.css', 'lightweight-charts.js', 'manifest.json'];
