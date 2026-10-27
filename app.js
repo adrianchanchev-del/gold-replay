@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.24.1', BUILD = 'gr-v43';
+  const APP_VERSION = '0.24.2', BUILD = 'gr-v44';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -518,6 +518,13 @@
   const COIN = { fund: 100, live: 10, pay: 5, base: 10, streakMax: 10 };
   const coins = () => (P.coins || 0);
   const acctCost = (a) => (a.demo ? 0 : a.type === 'funded' ? Math.ceil(a.cfg.size / COIN.fund) : Math.ceil(a.size0 / COIN.live));
+  // no-checklist mode: 1 coin per winning trade x (1 + 0.01 per 1% WR + 0.01 per 0.02 avg R of wins), session stats
+  function endModeCoins(t) {
+    if (!(t.pnl > 0)) return 0;
+    const H = S.hist || [], W = H.filter((h) => h.pnl > 0), wr = H.length ? W.length / H.length * 100 : 0, ar = W.length ? W.reduce((x, h) => x + h.r, 0) / W.length : 0;
+    const g = Math.round((1 + wr * 0.01 + ar / 0.02 * 0.01) * 100) / 100;
+    P.coins = Math.round((coins() + g) * 100) / 100; P.coinsEarned = (P.coinsEarned || 0) + g; return g;
+  }
   function ensureEcon() {
     P.coins = P.coins || 0; P.accts = P.accts || [];
     if (!P.accts.some((x) => x.demo)) {
@@ -529,7 +536,7 @@
   }
   function walletHtml() {
     const goal = P.goal || 10000, c = coins();
-    return '<div class="wallet"><div class="wl1"><span class="coinbig">' + c.toLocaleString('en-US') + '</span><span class="muted"> gold coins</span><a id="wl_goal" class="wlink">goal ' + goal.toLocaleString('en-US') + '</a></div>' + pbar(c / goal) +
+    return '<div class="wallet"><div class="wl1"><span class="coinbig">' + Math.floor(c).toLocaleString('en-US') + '</span><span class="muted"> gold coins</span><a id="wl_goal" class="wlink">goal ' + goal.toLocaleString('en-US') + '</a></div>' + pbar(c / goal) +
       '<div class="muted sm">Earn ' + COIN.base + '+ coins for every trade that follows your whole plan, win or lose. Journaling after the session earns none.</div></div>';
   }
 
@@ -1977,7 +1984,7 @@
     put('h_dpnl', masked ? DOT : sg(eq - S.dayStartBal), masked ? null : eq - S.dayStartBal);
     put('h_wr', wrOf(ss)); put('h_dwr', wrOf(hh.d));
     put('h_rr', rt(rs), rs); put('h_drr', rt(rd), rd);
-    acctChip(); { const hc = $('#h_coin'); if (hc) hc.textContent = coins().toLocaleString('en-US') + ' coins'; }
+    acctChip(); { const hc = $('#h_coin'); if (hc) hc.textContent = Math.floor(coins()).toLocaleString('en-US') + ' coins'; }
     if (S.open) updateOpenPanel();
   }
 
@@ -2142,8 +2149,9 @@
     E.closeTrade(t, price, tmin, reason, sl);
     S.balance += t.pnl; S.open = null; recordHist(t, null); acctClose(t);
     if (S.jmode === 'end') {
+      const cg = endModeCoins(t);
       saveP(); drawTradebar(); drawLines(); refreshHud();
-      toast(({ SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed', BREACH: 'Closed by account rules', WEEKEND: 'Closed for the weekend', STOPOUT: 'Margin stop-out' }[reason]) + ': ' + (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) + ' (' + t.r.toFixed(2) + 'R)');
+      toast(({ SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed', BREACH: 'Closed by account rules', WEEKEND: 'Closed for the weekend', STOPOUT: 'Margin stop-out' }[reason]) + ': ' + (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) + ' (' + t.r.toFixed(2) + 'R)' + (cg ? ' \u00b7 +' + cg.toFixed(2) + ' coins' : ''));
       flushAlerts();
       return;
     }
