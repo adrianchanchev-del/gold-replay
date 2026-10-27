@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.22.0', BUILD = 'gr-v39';
+  const APP_VERSION = '0.23.0', BUILD = 'gr-v40';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -295,6 +295,7 @@
   }
   let selDay = null, selSess = 1;
   function renderStart() {
+    ensureEcon();
     const days = dayList().filter((d) => SESSIONS.some((s) => startIdx(d, s[1]) >= 0));
     if (!days.length) { $('#view').innerHTML = '<div class="page"><h2>No data</h2></div>'; return; }
     if (selDay == null || !days.includes(selDay)) selDay = days[days.length - 1];
@@ -507,8 +508,28 @@
   }
   function doPayout(a) {
     const p = payoutCheck(a); if (!p.ok) return;
-    a.bal -= p.gross; a.hw = a.bal; a.dayStart = a.bal; a.earned = (a.earned || 0) + p.net; a.payouts = a.payouts || [];
+    a.bal -= p.gross; a.hw = a.bal; a.dayStart = a.bal; a.earned = (a.earned || 0) + p.net; P.coins = coins() + Math.floor(p.net / COIN.pay); P.coinsEarned = (P.coinsEarned || 0) + Math.floor(p.net / COIN.pay); a.payouts = a.payouts || [];
     a.payouts.push({ t: a.lastT, gross: p.gross, net: p.net }); a.days = {}; a.cycleDay = a.lastDay; saveP();
+  }
+
+  // ---------- gold coins ----------
+  // 1 coin per $100 of challenge size; live deposits are $10 per coin; payouts pay 1 coin per $5.
+  const COIN = { fund: 100, live: 10, pay: 5, base: 10, streakMax: 10 };
+  const coins = () => (P.coins || 0);
+  const acctCost = (a) => (a.demo ? 0 : a.type === 'funded' ? Math.ceil(a.cfg.size / COIN.fund) : Math.ceil(a.size0 / COIN.live));
+  function ensureEcon() {
+    P.coins = P.coins || 0; P.accts = P.accts || [];
+    if (!P.accts.some((x) => x.demo)) {
+      const a = { id: 'practice', type: 'live', demo: true, name: 'Practice', cfg: {}, cond: { varSpread: false, spreadLvl: 'normal', slip: false, slipLvl: 'low', comm: 0, swap: false, margin: false, stopOut: 50, requote: false, disc: false }, lev: 20, size0: 1000, attempt: 1, payouts: [], earned: 0 };
+      acctInit(a); P.accts.unshift(a);
+    }
+    if (!P.curAcct || !P.accts.some((x) => x.id === P.curAcct)) P.curAcct = 'practice';
+    saveP();
+  }
+  function walletHtml() {
+    const goal = P.goal || 10000, c = coins();
+    return '<div class="wallet"><div class="wl1"><span class="coinbig">' + c.toLocaleString('en-US') + '</span><span class="muted"> gold coins</span><a id="wl_goal" class="wlink">goal ' + goal.toLocaleString('en-US') + '</a></div>' + pbar(c / goal) +
+      '<div class="muted sm">Earn ' + COIN.base + '+ coins for every trade that follows your whole plan, win or lose. Journaling after the session earns none.</div></div>';
   }
 
   // ---------- account UI ----------
@@ -545,7 +566,7 @@
     if (canPay && a.type === 'funded' && a.stage === 'funded') h += '<button class="btn big" id="ap_pay"' + (payoutCheck(a).ok ? '' : ' disabled') + '>Request payout</button>';
     modal(h + '<button class="btn ghost big" id="ap_x">Close</button>', 'tall');
     $('#ap_x').onclick = closeModal;
-    const pb = $('#ap_pay'); if (pb) pb.onclick = () => { const p = payoutCheck(a); doPayout(a); closeModal(); toast('Payout: ' + fmt(p.net) + ' to you'); renderStart(); };
+    const pb = $('#ap_pay'); if (pb) pb.onclick = () => { const p = payoutCheck(a); doPayout(a); closeModal(); toast('Payout: ' + fmt(p.net) + ' = ' + Math.floor(p.net / COIN.pay) + ' coins'); renderStart(); };
   }
   function acctChip() {
     const a = AC(), el = $('#h_acct'); if (!el) return;
@@ -569,6 +590,7 @@
   const fundDraft = (k) => Object.assign({ type: 'funded', news: 'off', newsWin: 2, newsApply: 'both', noWeekend: false, minHold: 0, maxRisk: 0, lev: 100, maxTrades: 0, comm: 0 }, JSON.parse(JSON.stringify(FUND_PRESETS[k || 'two'])));
   const LIVE_PRESETS = { real: { varSpread: true, slip: true, comm: 7, swap: true, margin: true, requote: true, disc: false, slipLvl: 'normal', spreadLvl: 'normal' }, light: { varSpread: true, slip: false, comm: 0, swap: false, margin: true, requote: false, disc: false, slipLvl: 'low', spreadLvl: 'normal' }, clean: { varSpread: false, slip: false, comm: 0, swap: false, margin: false, requote: false, disc: false, slipLvl: 'low', spreadLvl: 'normal' } };
   const liveDraft = (k) => Object.assign({ type: 'live', name: 'Live account', bal: 1000, lev: 20, stopOut: 50 }, LIVE_PRESETS[k || 'real']);
+  const acctFormCost = () => (AD.type === 'funded' ? Math.ceil((+AD.size || 0) / COIN.fund) : Math.ceil((+AD.bal || 0) / COIN.live));
   function acctForm() {
     const D = AD, sc = (document.querySelector('#modal .sheet') || {}).scrollTop || 0;
     const num = (k, l, hint) => '<label class="lbl">' + l + '</label><input type="number" inputmode="decimal" step="any" data-f="' + k + '" value="' + getp(D, k) + '">' + (hint ? '<div class="muted sm">' + hint + '</div>' : '');
@@ -598,7 +620,7 @@
         num('comm', 'Commission $ per lot (100 oz)', '0 = none') + chk('swap', 'Overnight swap (charged at 22:00 UTC, triple on Wednesday)') +
         chk('margin', 'Margin call and stop-out') + num('stopOut', 'Stop-out margin level %') + chk('requote', 'Requotes (orders sometimes rejected, mostly around news)') + chk('disc', 'Random disconnects while playing (6 s without trading)');
     }
-    h += '<div class="tbtns"><button class="ghost2" id="ac_cancel">Cancel</button><button class="buy" id="ac_create">Create account</button></div>';
+    h += '<p class="muted sm">Wallet: ' + coins() + ' coins. Funded prep costs 1 coin per $100 of size. A live account is funded by depositing coins at $10 each and can be cashed out.</p><div class="tbtns"><button class="ghost2" id="ac_cancel">Cancel</button><button class="buy" id="ac_create">Create (' + acctFormCost() + ' coins)</button></div>';
     modal(h, 'tall'); const sh = document.querySelector('#modal .sheet'); if (sh) sh.scrollTop = sc;
     document.querySelectorAll('[data-type]').forEach((b) => (b.onclick = () => { AD = b.dataset.type === 'funded' ? fundDraft('two') : liveDraft('real'); acctForm(); }));
     document.querySelectorAll('[data-pre]').forEach((b) => (b.onclick = () => { AD = fundDraft(b.dataset.pre); acctForm(); }));
@@ -606,7 +628,7 @@
     document.querySelectorAll('[data-f]').forEach((el) => (el.onchange = () => {
       const k = el.dataset.f; let v = el.type === 'checkbox' ? el.checked : el.value;
       if (el.type !== 'checkbox' && k !== 'name' && /^-?\d+(\.\d+)?$/.test(String(v).trim())) v = +v;
-      setp(AD, k, v); if (k === 'phases') acctForm();
+      setp(AD, k, v); if (k === 'phases' || k === 'size' || k === 'bal') acctForm();
     }));
     $('#ac_cancel').onclick = closeModal;
     $('#ac_create').onclick = () => {
@@ -622,6 +644,8 @@
         const cond = { varSpread: !!D2.varSpread, spreadLvl: D2.spreadLvl, slip: !!D2.slip, slipLvl: D2.slipLvl, comm: +D2.comm || 0, swap: !!D2.swap, margin: !!D2.margin, stopOut: +D2.stopOut || 50, requote: !!D2.requote, disc: !!D2.disc };
         a = { id: 'a' + Date.now(), type: 'live', name: nm, cfg: {}, cond, lev: +D2.lev, size0: +D2.bal, attempt: 1, payouts: [], earned: 0 };
       }
+      const cost = acctCost(a); if (cost > coins()) { toast('Not enough coins: need ' + cost + ', you have ' + coins()); return; }
+      P.coins = coins() - cost;
       acctInit(a); P.accts = P.accts || []; P.accts.push(a); P.curAcct = a.id; saveP(); closeModal(); renderStart();
     };
   }
@@ -636,21 +660,26 @@
   }
   function bindAcctBox(a0) {
     const box = $('#ac_box'); if (!box) return; const list = P.accts || [];
-    let h = '<label class="lbl" style="margin-top:0">Account</label><div class="chips">' + list.map((x) => '<span class="chip ' + (a0 && a0.id === x.id ? 'on' : '') + '" data-ac="' + x.id + '">' + esc(x.name) + '</span>').join('') + '<span class="chip add" id="ac_new">+ New account</span></div>';
+    let h = walletHtml() + '<label class="lbl" style="margin-top:0">Account</label><div class="chips">' + list.map((x) => '<span class="chip ' + (a0 && a0.id === x.id ? 'on' : '') + '" data-ac="' + x.id + '">' + esc(x.name) + '</span>').join('') + '<span class="chip add" id="ac_new">+ New account</span></div>';
     if (!a0) h += '<p class="muted">You need a trading account before you can start a session. Tap + New account to make a live or funded-prep account.</p>';
     if (a0) {
       const m = acctM(a0, a0.bal);
       h += acctStatsHtml(a0) + '<div class="srow"><span>' + (a0.type === 'live' ? 'Account' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
         (m.ph ? pbar(m.cp / m.target) + '<div class="muted sm">Profit ' + fmt(m.cp) + ' of ' + fmt(m.target) + ' target</div>' : '') +
-        '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt</button>' : '') + '<button class="ghost2" id="ac_del">Delete</button></div>' ;
+        '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt' + (a0.demo ? '' : ' (' + acctCost(a0) + ')') + '</button>' : '') + '<button class="ghost2" id="ac_del">' + (a0.demo ? 'Reset' : a0.type === 'live' && a0.status === 'active' ? 'Cash out ' + Math.floor(a0.bal / COIN.live) : 'Delete') + '</button></div>' ;
     }
     box.innerHTML = h;
+    const wg = $('#wl_goal'); if (wg) wg.onclick = () => { const v = parseInt(prompt('Coin goal', P.goal || 10000), 10); if (v > 0) { P.goal = v; saveP(); renderStart(); } };
     box.querySelectorAll('[data-ac]').forEach((el) => (el.onclick = () => { P.curAcct = el.dataset.ac || null; saveP(); renderStart(); }));
     $('#ac_new').onclick = () => { AD = fundDraft('two'); acctForm(); };
     if (a0) {
       $('#ac_rules').onclick = () => openAcctPanel(a0, true);
-      const ag = $('#ac_again'); if (ag) ag.onclick = () => { const keep = { id: a0.id, type: a0.type, name: a0.name, cfg: a0.cfg, cond: a0.cond, lev: a0.lev, size0: a0.size0, attempt: (a0.attempt || 1) + 1, payouts: a0.payouts || [], earned: a0.earned || 0 }; const i = P.accts.indexOf(a0); P.accts[i] = acctInit(keep); saveP(); renderStart(); toast('New attempt started'); };
-      $('#ac_del').onclick = () => { if (confirm('Delete this account and its progress?')) { P.accts = P.accts.filter((x) => x !== a0); P.curAcct = null; saveP(); renderStart(); } };
+      const ag = $('#ac_again'); if (ag) ag.onclick = () => { const fee = acctCost(a0); if (fee > coins()) { toast('Not enough coins: need ' + fee); return; } P.coins = coins() - fee; const keep = { id: a0.id, type: a0.type, name: a0.name, cfg: a0.cfg, cond: a0.cond, lev: a0.lev, size0: a0.size0, demo: a0.demo, attempt: (a0.attempt || 1) + 1, payouts: a0.payouts || [], earned: a0.earned || 0 }; const i = P.accts.indexOf(a0); P.accts[i] = acctInit(keep); saveP(); renderStart(); toast('New attempt started'); };
+      $('#ac_del').onclick = () => {
+        if (a0.demo) { if (confirm('Reset practice balance?')) { const k2 = { id: a0.id, type: a0.type, name: a0.name, cfg: a0.cfg, cond: a0.cond, lev: a0.lev, size0: a0.size0, demo: true, attempt: (a0.attempt || 1) + 1, payouts: [], earned: 0 }; P.accts[P.accts.indexOf(a0)] = acctInit(k2); saveP(); renderStart(); } return; }
+        const cash = a0.type === 'live' && a0.status === 'active' ? Math.floor(a0.bal / COIN.live) : 0;
+        if (confirm(cash ? 'Cash out this account for ' + cash + ' coins?' : 'Delete this account and its progress? No coins come back.')) { P.coins = coins() + cash; P.accts = P.accts.filter((x) => x !== a0); P.curAcct = 'practice'; saveP(); renderStart(); }
+      };
     }
   }
 
@@ -697,7 +726,7 @@
     dTool = 'cur'; dSel = null; dDraft = null; dDrag = null; dGrab = false; ovSig = '';
     $('#view').innerHTML = '<div class="rp">' +
       '<div class="top">' +
-      '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span><span id="h_acct" class="stag acc" style="display:none"></span><span class="trc">Trades <b id="h_cnt"></b></span></div>' +
+      '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span><span id="h_acct" class="stag acc" style="display:none"></span><span id="h_coin" class="stag coin"></span><span class="trc">Trades <b id="h_cnt"></b></span></div>' +
       '<div class="stats4' + (hasDD() ? ' s5' : '') + '"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Equity <u id="h_eq"></u></em></span><span class="kv"><i>P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span>' + (hasDD() ? '<span class="kv"><i>DD room</i><b id="h_dd"></b><em class="sub">Max <u id="h_mdd"></u></em></span>' : '') + '<span class="kv"><i>Win rate</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
       '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
@@ -1928,7 +1957,7 @@
     put('h_dpnl', masked ? DOT : sg(eq - S.dayStartBal), masked ? null : eq - S.dayStartBal);
     put('h_wr', wrOf(ss)); put('h_dwr', wrOf(hh.d));
     put('h_rr', rt(rs), rs); put('h_drr', rt(rd), rd);
-    acctChip();
+    acctChip(); { const hc = $('#h_coin'); if (hc) hc.textContent = coins().toLocaleString('en-US') + ' coins'; }
     if (S.open) updateOpenPanel();
   }
 
@@ -2136,6 +2165,8 @@
     const gain = sc.total * 5 + sc.bonus * 2 + sc.honesty * 5 + (sc.mistake ? 0 : 10);
     P.xp += gain;
     if (!sc.mistake) { P.streak++; P.bestStreak = Math.max(P.bestStreak, P.streak); } else P.streak = 0;
+    const coinGain = !sc.mistake ? COIN.base + Math.min(COIN.streakMax, P.streak - 1) : 0;
+    if (coinGain) { P.coins = coins() + coinGain; P.coinsEarned = (P.coinsEarned || 0) + coinGain; }
     if (sc.honesty >= 1) P.honest++;
     P.journal.push({ t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc.total, max: sc.max, bonus: sc.bonus, honesty: sc.honesty, verdict: sc.verdict, said, level: sc.mistake ? 1 : 2,
       flags: { incomplete: sc.adherence.comp < 1, risk: !sc.adherence.riskOk, rr: !sc.adherence.rrOk, limits: !sc.adherence.limitsOk, widened: !sc.adherence.stopOk, manual: t.reason === 'MANUAL' }, note, why: t.note, comp: sc.adherence.comp });
@@ -2148,7 +2179,7 @@
     modal('<h3>Score: ' + sc.total + '/' + sc.max + (sc.bonus ? ' <span class=\"up\">+' + sc.bonus + ' bonus</span>' : '') + '</h3>' +
       sc.rows.map((r) => '<div class=\"srow\"><span>' + esc(r.label) + '</span><b class=\"' + (r.got >= r.max ? 'up' : 'dn') + '\">' + (r.bonus ? '+' : '') + r.got + (r.bonus ? '' : '/' + r.max) + '</b></div>').join('') +
       '<div class=\"srow hon\"><span><b>Honesty</b> &middot; ' + hl + '</span><b class=\"' + (sc.honesty === 2 ? 'up' : sc.honesty === 0 ? 'dn' : '') + '\">' + sc.honesty + '/2</b></div>' +
-      '<p class=\"vt\">' + vtxt + '</p><div class=\"xpline\">+' + gain + ' XP &middot; Level ' + lvAfter + (lvAfter > lvBefore ? ' &#127881; LEVEL UP' : '') + ' &middot; Clean streak ' + P.streak + '</div>' +
+      '<p class=\"vt\">' + vtxt + '</p><div class=\"xpline\">+' + gain + ' XP' + (coinGain ? ' &middot; +' + coinGain + ' coins' : ' &middot; no coins (plan not fully followed)') + ' &middot; Level ' + lvAfter + (lvAfter > lvBefore ? ' &#127881; LEVEL UP' : '') + ' &middot; Clean streak ' + P.streak + '</div>' +
       '<button class=\"btn big\" id=\"rs_ok\">Continue</button>', 'tall nodismiss');
     $('#rs_ok').onclick = () => { closeModal(); setTimeout(flushAlerts, 60); drawTradebar(); const risk = (S.dayStartBal - S.balance) >= S.dayStartBal * P.plan.risk.dailyLoss / 100; if (risk) toast('Daily loss limit hit. Plan says stop for today.'); };
   }
