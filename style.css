@@ -238,7 +238,7 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 .kbb{min-width:118px;height:32px;border-radius:8px;background:#0d1117;border:1px solid #2b3544;color:#e6edf3;font-size:12px;cursor:pointer}
 .kbb.cap{border-color:#e6c14b;color:#e6c14b}
 
-.stats4 .kv .sub{font-style:normal;font-size:11px;color:#6b7686;white-space:nowrap}
+.stats4 .kv .sub{font-style:normal;font-size:clamp(7px,10cqw,11px);color:#6b7686;white-space:nowrap;display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .stats4 .kv u{text-decoration:none;color:#c9d1d9;font-weight:600}.stats4 .kv u.up{color:#26a69a}.stats4 .kv u.dn{color:#ef5350}
 .trc{margin-left:auto;font-size:12px;color:#6b7686}.trc b{color:#e6edf3;font-weight:600}
 .stag.acc{cursor:pointer;color:#9fd0ff}.stag.acc.warn{color:#e6c14b}.stag.acc.bad{color:#ef5350}
@@ -247,11 +247,11 @@ textarea{width:100%;box-sizing:border-box;background:#10141a;color:#e6edf3;borde
 .sheet h4{margin:14px 0 4px;font-size:13px;color:#e6c14b}
 .lbl{display:block;margin-top:10px}
 
-.stats4.s5{grid-template-columns:repeat(5,1fr)}.stats4.acs{margin:8px 0}.stats4.s5 .kv b,.stats4.s5 #h_cnt{font-size:15px}
+.stats4.s5{grid-template-columns:repeat(5,1fr)}.stats4.acs{margin:8px 0}.stats4.s5 .kv b,.stats4.s5 #h_cnt{font-size:clamp(7px,13cqw,15px)}
 
 /* v0.17.1: stat boxes never clip digits */
 .stats4 .kv{padding:7px 5px;container-type:inline-size}
-.stats4 .kv b,.stats4 #h_cnt{font-size:clamp(9px,17cqw,17px);font-variant-numeric:tabular-nums;overflow:visible}
+.stats4 .kv b,.stats4 #h_cnt{font-size:clamp(7px,17cqw,17px);font-variant-numeric:tabular-nums;max-width:100%;overflow:hidden;text-overflow:ellipsis;display:block}
 .stats4.acs.s5{grid-template-columns:repeat(3,1fr)}
 .stats4.acs.s5 .kv b{font-size:clamp(9px,15cqw,17px)}
 

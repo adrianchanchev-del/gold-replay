@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.23.0', BUILD = 'gr-v40';
+  const APP_VERSION = '0.23.1', BUILD = 'gr-v41';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -727,14 +727,14 @@
     $('#view').innerHTML = '<div class="rp">' +
       '<div class="top">' +
       '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span><span id="h_acct" class="stag acc" style="display:none"></span><span id="h_coin" class="stag coin"></span><span class="trc">Trades <b id="h_cnt"></b></span></div>' +
-      '<div class="stats4' + (hasDD() ? ' s5' : '') + '"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Equity <u id="h_eq"></u></em></span><span class="kv"><i>P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span>' + (hasDD() ? '<span class="kv"><i>DD room</i><b id="h_dd"></b><em class="sub">Max <u id="h_mdd"></u></em></span>' : '') + '<span class="kv"><i>Win rate</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
+      '<div class="stats4' + (hasDD() ? ' s5' : '') + '"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Eq <u id="h_eq"></u></em></span><span class="kv"><i>P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span>' + (hasDD() ? '<span class="kv"><i>DD room</i><b id="h_dd"></b><em class="sub">Max <u id="h_mdd"></u></em></span>' : '') + '<span class="kv"><i>Win rate</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
       '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
       '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><div id="favis" class="favis"></div><div id="toolpanel" class="toolpanel"></div><div id="ctxm" class="ctxm"></div>' +
       '<div class="island"><div class="grip" data-grip="isl" title="Drag to move (double-click to reset)">' + UI.grip + '</div><div class="fxbar"><button id="c_play" class="pl">' + UI.play + '</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_cross" title="Crosshair">&#8982;</button><button id="c_end" class="endb">End</button></div></div></div></div>';
     if (!S.vid) S.vid = Date.now();
     trackDraws();
-    mountChart(); loadTF(savedView && savedView.key === S.vid ? savedView : null); drawTfBits(); drawTb(); drawFav(); bindDraw(); placeMovable('isl'); bindGrip($('.island .grip'), $('.island'), 'isl');
+    mountChart(); loadTF(savedView && savedView.key === S.vid ? savedView : null); drawTfBits(); drawTb(); drawFav(); bindDraw(); placeMovable('isl'); bindGrip($('.island .grip'), $('.island'), 'isl'); watchMovables();
     $('#tf_menu').onclick = (e) => { e.stopPropagation(); $('#tf_panel').classList.toggle('on'); };
     $('#c_next').onclick = () => { pause(); nextCandle(); };
     $('#c_sess').onclick = () => { pause(); nextSession(); };
@@ -1337,9 +1337,23 @@
     const el = key === 'fav' ? $('#favis') : key === 'note' ? $('#qnote') : $('.island'), wrap = $('#chartwrap'); if (!el || !wrap) return;
     const p = P.set && P.set.pos && P.set.pos[key]; if (!p) return;
     const W = wrap.clientWidth, H = wrap.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
+    if (!W || !H) return; // layout not settled yet; a pending resize-observer pass will place it
     el.style.left = Math.max(0, Math.min(W - w, p.fx * W)) + 'px'; el.style.top = Math.max(0, Math.min(H - h, p.fy * H)) + 'px';
     el.style.right = 'auto'; el.style.bottom = 'auto'; el.style.transform = 'none';
   }
+  // Re-clamp every floating panel whenever the chart area changes size (e.g. the
+  // top info bar grows an extra row for a funded account). Without this, a
+  // position saved against a taller chartwrap can end up below the new, shorter
+  // one -- visually trapped under the dock, which swallows the touch before the
+  // grip ever sees it.
+  let movableRO = null;
+  function watchMovables() {
+    const wrap = $('#chartwrap'); if (!wrap) return;
+    if (movableRO) { try { movableRO.disconnect(); } catch (e) {} }
+    movableRO = new ResizeObserver(() => { ['isl', 'fav', 'note'].forEach(placeMovable); });
+    movableRO.observe(wrap);
+  }
+  function resetMovables() { if (P.set) delete P.set.pos; saveP(); ['.island', '#favis', '#qnote'].forEach((s) => { const el = $(s); if (el) el.style.left = el.style.top = el.style.right = el.style.bottom = el.style.transform = ''; }); }
   function bindGrip(g, el, key) {
     if (!g) return; let st = null;
     g.onpointerdown = (e) => { e.preventDefault(); e.stopPropagation(); const r = el.getBoundingClientRect(); st = { dx: e.clientX - r.left, dy: e.clientY - r.top }; try { g.setPointerCapture(e.pointerId); } catch (x) {} };
@@ -1950,10 +1964,11 @@
     const put = (id, txt, v) => { const el = $('#' + id); if (!el) return; el.textContent = txt; el.className = v == null || Math.abs(v) < 0.005 ? '' : (v > 0 ? 'up' : 'dn'); };
     const eq = equity(), sg = (v) => (v >= 0 ? '+' : '') + fmt(v), hh = dayHist(), ss = hh.s, rs = avgROf(ss), rd = avgROf(hh.d), ac = AC(), plBase = S.startBal;
     const rt = (v) => (v == null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(2) + 'R');
-    $('#h_bal').textContent = masked ? DOT : fmt(S.balance);
-    put('h_eq', masked ? DOT : fmt(eq), masked ? null : eq - S.balance);
+    const fv = hasDD() ? (n) => fmt(n, 0) : fmt; // 5 boxes on a phone width: drop the cents so the number fits
+    $('#h_bal').textContent = masked ? DOT : fv(S.balance);
+    put('h_eq', masked ? DOT : fv(eq), masked ? null : eq - S.balance);
     put('h_pnl', masked ? DOT : sg(eq - plBase), masked ? null : eq - plBase);
-    if (ac && $('#h_dd')) { const rm = ddRoom(ac, eq); put('h_dd', masked ? DOT : (rm.d != null ? fmt(rm.d) : '--'), null); put('h_mdd', masked ? DOT : (rm.m != null ? fmt(rm.m) : '--'), null); }
+    if (ac && $('#h_dd')) { const rm = ddRoom(ac, eq); put('h_dd', masked ? DOT : (rm.d != null ? fv(rm.d) : '--'), null); put('h_mdd', masked ? DOT : (rm.m != null ? fv(rm.m) : '--'), null); }
     put('h_dpnl', masked ? DOT : sg(eq - S.dayStartBal), masked ? null : eq - S.dayStartBal);
     put('h_wr', wrOf(ss)); put('h_dwr', wrOf(hh.d));
     put('h_rr', rt(rs), rs); put('h_drr', rt(rd), rd);
@@ -2361,7 +2376,8 @@
       '<button class="btn ghost" id="st_ind" style="margin-top:12px">Indicators&hellip;</button></div>' +
       '<div class="card"><b>Plan pictures</b><p class="muted sm">Screenshots or photos of your written plan or setups. Kept on this device.</p><div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
       '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
-      (window.Sync ? window.Sync.cardHtml() : '') + kbCardHtml() + '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
+      (window.Sync ? window.Sync.cardHtml() : '') + kbCardHtml() + '<div class="card"><b>Display</b><p class="muted sm">If the replay bar, the drawing toolbar or a note ever gets stuck off-screen or behind the tab bar, this snaps them all back.</p><button class="btn ghost" id="p_unstick">Reset floating panels</button></div>' +
+      '<div class="card"><b>Danger zone</b><p><button class="btn ghost" id="p_reset">Reset everything</button></p></div></div>';
     latestBuild().then((lb) => { const el = $('#v_latest'); if (!el) return; el.innerHTML = !lb ? 'Latest on server: could not check (offline?)' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; });
     $('#v_check').onclick = () => { $('#v_latest').textContent = 'Latest on server: checking\u2026'; latestBuild().then((lb) => { $('#v_latest').innerHTML = !lb ? 'Could not check' : lb === BUILD ? '<span class="up">Up to date</span> (' + lb + ')' : '<span class="dn">Update available: ' + lb + '. Tap Force refresh.</span>'; }); };
     $('#v_force').onclick = forceRefresh;
@@ -2380,6 +2396,7 @@
     document.querySelectorAll('[data-rmimg]').forEach((b) => (b.onclick = () => { const a = loadImgs(); a.splice(+b.dataset.rmimg, 1); saveImgs(a); renderSettings(); }));
     document.querySelectorAll('[data-view]').forEach((im) => (im.onclick = () => showImg(+im.dataset.view)));
     if (window.Sync) window.Sync.bind($);
+    $('#p_unstick').onclick = () => { resetMovables(); toast('Panels reset'); };
     $('#p_reset').onclick = () => { modal('<h3>Reset everything?</h3><p>Deletes your plan, XP and journal on this device.</p><div class="tbtns"><button class="ghost2" id="rs_n">Cancel</button><button class="sell" id="rs_y">Delete</button></div>'); $('#rs_n').onclick = closeModal; $('#rs_y').onclick = () => { localStorage.removeItem(KEY); localStorage.removeItem(IKEY); location.reload(); }; };
   }
   function showImg(i) {
