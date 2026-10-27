@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.24.2', BUILD = 'gr-v44';
+  const APP_VERSION = '0.24.3', BUILD = 'gr-v45';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -519,11 +519,11 @@
   const coins = () => (P.coins || 0);
   const acctCost = (a) => (a.demo ? 0 : a.type === 'funded' ? Math.ceil(a.cfg.size / COIN.fund) : Math.ceil(a.size0 / COIN.live));
   // no-checklist mode: 1 coin per winning trade x (1 + 0.01 per 1% WR + 0.01 per 0.02 avg R of wins), session stats
-  function endModeCoins(t) {
-    if (!(t.pnl > 0)) return 0;
-    const H = S.hist || [], W = H.filter((h) => h.pnl > 0), wr = H.length ? W.length / H.length * 100 : 0, ar = W.length ? W.reduce((x, h) => x + h.r, 0) / W.length : 0;
-    const g = Math.round((1 + wr * 0.01 + ar / 0.02 * 0.01) * 100) / 100;
-    P.coins = Math.round((coins() + g) * 100) / 100; P.coinsEarned = (P.coinsEarned || 0) + g; return g;
+  function endModeCoins() {
+    const H = S.hist || [], W = H.filter((h) => h.pnl > 0); if (!W.length) return { n: 0, mult: 1, wr: 0, ar: 0, total: 0 };
+    const wr = W.length / H.length * 100, ar = W.reduce((x, h) => x + h.r, 0) / W.length;
+    const mult = Math.round((1 + wr * 0.01 + ar / 0.02 * 0.01) * 100) / 100;
+    return { n: W.length, mult, wr, ar, total: Math.round(W.length * mult * 100) / 100 };
   }
   function ensureEcon() {
     P.coins = P.coins || 0; P.accts = P.accts || [];
@@ -1839,6 +1839,7 @@
     const has = (v) => v != null && isFinite(v);
     let h = '<h3>These are your stats for this session</h3>' + SMET.filter((m) => has(st[m[0]])).map((m) => '<div class="srow"><span>' + m[1] + '</span><b class="' + (m[3] && st[m[0]] !== 0 ? (st[m[0]] > 0 || m[0] === 'wr' || m[0] === 'pf' || m[0] === 'score' ? 'up' : 'dn') : '') + '">' + m[2](st[m[0]]) + '</b></div>').join('');
     if (!st.n) h += '<p class="muted sm">No trades this session.</p>';
+    if (S && S.endCoins && S.endCoins.total > 0) { const c = S.endCoins; h += '<div class="wallet"><b>+' + c.total.toFixed(2) + ' coins</b><div class="muted sm">' + c.n + ' winning trades x ' + c.mult.toFixed(2) + 'x (win rate ' + c.wr.toFixed(0) + '%, avg win ' + c.ar.toFixed(2) + 'R)</div></div>'; }
     h += '<h4>This is how they compare to last session</h4>';
     if (!prev) h += '<p class="muted sm">This is your first finished session, so there is nothing to compare yet.</p>';
     else {
@@ -2149,9 +2150,8 @@
     E.closeTrade(t, price, tmin, reason, sl);
     S.balance += t.pnl; S.open = null; recordHist(t, null); acctClose(t);
     if (S.jmode === 'end') {
-      const cg = endModeCoins(t);
       saveP(); drawTradebar(); drawLines(); refreshHud();
-      toast(({ SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed', BREACH: 'Closed by account rules', WEEKEND: 'Closed for the weekend', STOPOUT: 'Margin stop-out' }[reason]) + ': ' + (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) + ' (' + t.r.toFixed(2) + 'R)' + (cg ? ' \u00b7 +' + cg.toFixed(2) + ' coins' : ''));
+      toast(({ SL: 'Stopped out', TP: 'Target hit', MANUAL: 'Closed', BREACH: 'Closed by account rules', WEEKEND: 'Closed for the weekend', STOPOUT: 'Margin stop-out' }[reason]) + ': ' + (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) + ' (' + t.r.toFixed(2) + 'R)');
       flushAlerts();
       return;
     }
@@ -2224,7 +2224,9 @@
     {
       closeModal();
       const st = sessStats(), prev = (P.sessLog || []).length ? P.sessLog[P.sessLog.length - 1].st : null;
+      S.endCoins = S.jmode === 'end' ? endModeCoins() : null;
       const fin = (notes) => statsModal(st, prev, () => {
+        if (S.endCoins && S.endCoins.total > 0) { P.coins = Math.round((coins() + S.endCoins.total) * 100) / 100; P.coinsEarned = (P.coinsEarned || 0) + S.endCoins.total; }
         P.sessLog = P.sessLog || []; P.sessLog.push({ st, notes, t0: S.startT, t1: E.t(S.cur), vid: S.vid, acct: S.acct || null, mode: S.jmode || 'trade' }); if (P.sessLog.length > 100) P.sessLog.shift();
         P.sessionsDone++; P.session = null; S = null; saveP(); closeModal(); showTab('replay');
       });
