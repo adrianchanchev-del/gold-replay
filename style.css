@@ -279,6 +279,12 @@ html,body{position:fixed;top:0;left:0;right:0;bottom:0;height:auto;min-height:-w
 #app{bottom:calc(-1 * var(--bx,0px))!important}
 .nav{padding-bottom:calc(env(safe-area-inset-bottom) + var(--bx,0px))!important}
 
+/* v0.24: fullscreen chart -- hide the top stats row and the tab bar, keep the trade dock */
+body.fschart .top{display:none}
+body.fschart .dock .nav{display:none}
+body.fschart .dock{padding-bottom:calc(env(safe-area-inset-bottom) + var(--bx,0px))}
+#c_fs.on{color:#e6c14b}
+
 .qnote{position:absolute;left:12px;top:70px;width:270px;z-index:9;background:transparent;display:flex;flex-direction:column;gap:2px}
 .qnote .grip{align-self:flex-start;width:34px;height:14px;background:rgba(20,26,35,.55);border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none}
 .qnote .grip svg{width:12px;height:12px}

@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.23.1', BUILD = 'gr-v41';
+  const APP_VERSION = '0.24.0', BUILD = 'gr-v42';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -265,6 +265,7 @@
   // ---------- shell ----------
   function showTab(t) {
     tab = t; pause();
+    document.body.classList.remove('fschart'); // never leave the tab bar hidden outside an active replay screen
     if (t !== 'replay') destroyChart();
     $('#app').innerHTML = '<div id="view"></div><div class="dock">' + (t === 'replay' && S ? '<div id="tradebar"></div>' : '') + '<nav class="nav">' +
       [['replay', 'Replay'], ['stats', 'Journal & Data'], ['plan', 'Plan'], ['settings', 'Settings']].map((x) => '<button data-tab="' + x[0] + '" class="' + (t === x[0] ? 'on' : '') + '">' + ICON[x[0]] + '<span>' + x[1] + '</span></button>').join('') + '</nav></div>';
@@ -729,7 +730,7 @@
       '<div class="info2"><div class="i2a"><span id="h_sess" class="stag"></span><span id="h_time"></span><span id="h_acct" class="stag acc" style="display:none"></span><span id="h_coin" class="stag coin"></span><span class="trc">Trades <b id="h_cnt"></b></span></div>' +
       '<div class="stats4' + (hasDD() ? ' s5' : '') + '"><span class="kv"><i>Balance</i><b id="h_bal"></b><em class="sub">Eq <u id="h_eq"></u></em></span><span class="kv"><i>P&amp;L</i><b id="h_pnl"></b><em class="sub">Day <u id="h_dpnl"></u></em></span>' + (hasDD() ? '<span class="kv"><i>DD room</i><b id="h_dd"></b><em class="sub">Max <u id="h_mdd"></u></em></span>' : '') + '<span class="kv"><i>Win rate</i><b id="h_wr"></b><em class="sub">Day <u id="h_dwr"></u></em></span><span class="kv"><i>Avg R</i><b id="h_rr"></b><em class="sub">Day <u id="h_drr"></u></em></span></div></div>' +
       '<div class="tfrow"><div class="tfmw"><button class="tfm" id="tf_menu"></button><div id="tf_panel" class="tfpanel"></div></div><div class="tfpins" id="tf_pins"></div>' +
-      '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button></div></div>' +
+      '<button class="tf ind" id="c_hist" title="Trade history">' + UI.list + '</button><button class="tf ind" id="c_note" title="Quick note">' + UI.note + '</button><button class="tf ind" id="c_ind">fx</button><button class="tf ind" id="c_fs" title="Fullscreen"></button></div></div>' +
       '<div id="chartwrap"><div id="chart"></div><canvas id="ov"></canvas><div id="hnd"></div><div id="dtb"></div><div id="favis" class="favis"></div><div id="toolpanel" class="toolpanel"></div><div id="ctxm" class="ctxm"></div>' +
       '<div class="island"><div class="grip" data-grip="isl" title="Drag to move (double-click to reset)">' + UI.grip + '</div><div class="fxbar"><button id="c_play" class="pl">' + UI.play + '</button><button id="c_next">+candle</button><button id="c_sess">Next sesh</button><div class="spw"><button id="c_speed">1x &#9662;</button><div id="c_menu" class="spmenu"></div></div><button id="c_cross" title="Crosshair">&#8982;</button><button id="c_end" class="endb">End</button></div></div></div></div>';
     if (!S.vid) S.vid = Date.now();
@@ -747,6 +748,8 @@
     $('#chartwrap').addEventListener('pointerdown', (e) => { if (!e.target.closest('.spw')) $('#c_menu').classList.remove('on'); });
     $('#view').addEventListener('pointerdown', (e) => { if (!e.target.closest('.tfmw')) { const p = $('#tf_panel'); if (p) p.classList.remove('on'); } });
     $('#c_ind').onclick = () => { pause(); openInd(); };
+    setFs(!!(P.set && P.set.fschart));
+    $('#c_fs').onclick = () => setFs(!document.body.classList.contains('fschart'));
     wireCross();
     const crossBtn = $('#c_cross');
     if (crossBtn) { crossBtn.classList.toggle('on', !!P.set.cross); crossBtn.onclick = () => { setCross(!P.set.cross); crossBtn.classList.toggle('on', !!P.set.cross); }; }
@@ -897,6 +900,8 @@
     play: svg(Pa('M7 4L19 12L7 20Z', 'fill="currentColor"')),
     pause: svg(Pa('M8 5V19M16 5V19', 'stroke-width="3"')),
     reset: svg(Pa('M4 12a8 8 0 1 0 3-6.2M4 4V8H8')),
+    expand: svg(Pa('M4 9V4H9') + Pa('M15 4H20V9') + Pa('M4 15V20H9') + Pa('M20 15V20H15')),
+    collapse: svg(Pa('M9 4V9H4') + Pa('M15 4V9H20') + Pa('M9 20V15H4') + Pa('M15 20V15H20')),
   };
   const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618];
   const FCOL = ['#787b86', '#f23645', '#ff9800', '#4caf50', '#089981', '#00bcd4', '#787b86', '#2962ff', '#9c27b0'];
@@ -2357,6 +2362,14 @@
   }
   function applyBx() { document.documentElement.style.setProperty('--bx', ((P && P.set && P.set.bx) || 0) + 'px'); }
   function setCross(on) { P.set.cross = !!on; saveP(); try { chart.applyOptions({ crosshair: { mode: on ? 0 : 2 } }); } catch (e) {} }
+  // Fullscreen chart: hides the top info/stats row and the bottom tab bar (keeps
+  // the timeframe row and the trade dock, since both stay useful mid-session).
+  function setFs(on) {
+    document.body.classList.toggle('fschart', on);
+    if (P.set) { P.set.fschart = on; saveP(); }
+    const b = $('#c_fs'); if (b) { b.innerHTML = on ? UI.collapse : UI.expand; b.classList.toggle('on', on); b.title = on ? 'Exit fullscreen' : 'Fullscreen'; }
+    setTimeout(() => ['isl', 'fav', 'note'].forEach(placeMovable), 60);
+  }
   async function forceRefresh() {
     try { const rs = await navigator.serviceWorker.getRegistrations(); for (const r of rs) await r.unregister(); } catch (e) {}
     try { for (const k of await caches.keys()) await caches.delete(k); } catch (e) {}
