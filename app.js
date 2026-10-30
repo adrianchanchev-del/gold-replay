@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.24.5', BUILD = 'gr-v47';
+  const APP_VERSION = '0.24.6', BUILD = 'gr-v48';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -666,6 +666,29 @@
     const dd = a.type === 'funded' && (rm.d != null || rm.m != null) ? box('DD room', rm.d != null ? fmt(rm.d) : '--', '', 'Max <u>' + (rm.m != null ? fmt(rm.m) : '--') + '</u>') : '';
     return '<div class="stats4 acs' + (dd ? ' s5' : '') + '">' + box('Balance', fmt(a.bal)) + box('P&amp;L', (pl >= 0 ? '+' : '') + fmt(pl), cl(pl)) + dd + box('Win rate', wr, '', H.length + ' trades') + box('Avg R', rt(r), cl(r), 'wins only') + '</div>';
   }
+  function dwForm(a, mode, val) {
+    const maxW = Math.max(0, Math.floor((a.bal - 1) / COIN.live)), dep = mode === 'dep', v = Math.max(0, parseInt(val, 10) || 0);
+    const usd = v * COIN.live, bad = v > 0 && (dep ? v > coins() : v > maxW);
+    modal('<h3>Deposit / Withdraw</h3><div class="seg"><button data-dw="dep" class="' + (dep ? 'sel' : '') + '">Deposit</button><button data-dw="wd" class="' + (dep ? '' : 'sel') + '">Withdraw</button></div>' +
+      '<label class="lbl">Account</label><div class="srow"><span>' + esc(a.name) + '</span><b>' + fmt(a.bal) + '</b></div>' +
+      '<label class="lbl">Coins to ' + (dep ? 'deposit' : 'withdraw') + '</label><input type="number" inputmode="numeric" step="1" min="0" id="dw_v" value="' + (v || '') + '" placeholder="0">' +
+      '<div class="muted sm">' + (dep ? 'Wallet: ' + Math.floor(coins()) + ' coins.' : 'Up to ' + maxW + ' coins can leave the account.') + ' Each coin = $' + COIN.live + '.</div>' +
+      '<div class="srow"><span>' + (dep ? 'Adds' : 'Removes') + '</span><b id="dw_usd">' + fmt(usd) + '</b></div><div class="srow"><span>New balance</span><b id="dw_nb" class="' + (bad ? 'dn' : '') + '">' + fmt(a.bal + (dep ? usd : -usd)) + '</b></div>' +
+      '<p class="dn sm" id="dw_err">' + (bad ? (dep ? 'Not enough coins.' : 'More than the account can give up.') : '') + '</p>' +
+      '<div class="tbtns"><button class="ghost2" id="dw_x">Cancel</button><button class="buy" id="dw_ok"' + (v > 0 && !bad ? '' : ' disabled') + '>' + (dep ? 'Deposit' : 'Withdraw') + '</button></div>');
+    document.querySelectorAll('[data-dw]').forEach((b) => (b.onclick = () => dwForm(a, b.dataset.dw, $('#dw_v').value)));
+    $('#dw_v').oninput = () => {
+      const n = Math.max(0, parseInt($('#dw_v').value, 10) || 0), u = n * COIN.live, bd = n > 0 && (dep ? n > coins() : n > maxW);
+      $('#dw_usd').textContent = fmt(u); $('#dw_nb').textContent = fmt(a.bal + (dep ? u : -u)); $('#dw_nb').className = bd ? 'dn' : '';
+      $('#dw_err').textContent = bd ? (dep ? 'Not enough coins.' : 'More than the account can give up.') : ''; $('#dw_ok').disabled = !(n > 0 && !bd);
+    };
+    $('#dw_x').onclick = closeModal;
+    $('#dw_ok').onclick = () => {
+      const v = Math.max(0, parseInt($('#dw_v').value, 10) || 0), usd = v * COIN.live; if (!(v > 0) || (dep ? v > coins() : v > maxW)) return; const d = dep ? usd : -usd;
+      P.coins = Math.round((coins() + (dep ? -v : v)) * 100) / 100; a.bal += d; a.size0 += d; a.base = (a.base || 0) + d; a.hw = dep ? Math.max(a.hw || 0, a.bal) : Math.min(a.hw || a.bal, a.bal); a.dayStart = (a.dayStart || 0) + d;
+      saveP(); closeModal(); renderStart(); toast((dep ? 'Deposited $' : 'Withdrew $') + usd);
+    };
+  }
   function bindAcctBox(a0) {
     const box = $('#ac_box'); if (!box) return; const list = P.accts || [];
     let h = walletHtml() + '<label class="lbl" style="margin-top:0">Account</label><div class="chips">' + list.map((x) => '<span class="chip ' + (a0 && a0.id === x.id ? 'on' : '') + '" data-ac="' + x.id + '">' + esc(x.name) + '</span>').join('') + '<span class="chip add" id="ac_new">+ New account</span></div>';
@@ -674,7 +697,7 @@
       const m = acctM(a0, a0.bal);
       h += acctStatsHtml(a0) + '<div class="srow"><span>' + (a0.type === 'live' ? 'Account' : 'Funded prep') + ' &middot; ' + ACT_STAGE(a0) + '</span><b>' + fmt(a0.bal) + '</b></div>' +
         (m.ph ? pbar(m.cp / m.target) + '<div class="muted sm">Profit ' + fmt(m.cp) + ' of ' + fmt(m.target) + ' target</div>' : '') +
-        '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.type === 'live' && !a0.demo && a0.status === 'active' ? '<button class="buy" id="ac_dep">Deposit</button>' : '') + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt' + (a0.demo ? '' : ' (' + acctCost(a0) + ')') + '</button>' : '') + '<button class="ghost2" id="ac_del">' + (a0.demo ? 'Reset' : a0.type === 'live' && a0.status === 'active' ? 'Cash out ' + Math.floor(a0.bal / COIN.live) : 'Delete') + '</button></div>' ;
+        '<div class="tbtns"><button class="ghost2" id="ac_rules">Rules and progress</button>' + (a0.type === 'live' && !a0.demo && a0.status === 'active' ? '<button class="buy" id="ac_dep">Deposit / Withdraw</button>' : '') + (a0.status !== 'active' ? '<button class="buy" id="ac_again">New attempt' + (a0.demo ? '' : ' (' + acctCost(a0) + ')') + '</button>' : '') + '<button class="ghost2" id="ac_del">' + (a0.demo ? 'Reset' : a0.type === 'live' && a0.status === 'active' ? 'Cash out ' + Math.floor(a0.bal / COIN.live) : 'Delete') + '</button></div>' ;
     }
     box.innerHTML = h;
     const wg = $('#wl_goal'); if (wg) wg.onclick = () => { const v = parseInt(prompt('Coin goal', P.goal || 10000), 10); if (v > 0) { P.goal = v; saveP(); renderStart(); } };
@@ -682,12 +705,7 @@
     $('#ac_new').onclick = () => { AD = fundDraft('two'); acctForm(); };
     if (a0) {
       $('#ac_rules').onclick = () => openAcctPanel(a0, true);
-      const dp = $('#ac_dep'); if (dp) dp.onclick = () => {
-        const v = parseInt(prompt('Deposit how many coins? You have ' + Math.floor(coins()) + '. Each coin adds $' + COIN.live + '.', '10'), 10);
-        if (!(v > 0)) return; if (v > coins()) { toast('Not enough coins'); return; }
-        P.coins = Math.round((coins() - v) * 100) / 100; a0.bal += v * COIN.live; a0.size0 += v * COIN.live; a0.base = (a0.base || 0) + v * COIN.live; a0.hw = Math.max(a0.hw || 0, a0.bal); a0.dayStart = (a0.dayStart || 0) + v * COIN.live;
-        saveP(); renderStart(); toast('Deposited $' + (v * COIN.live));
-      };
+      const dp = $('#ac_dep'); if (dp) dp.onclick = () => dwForm(a0, 'dep', '');
       const ag = $('#ac_again'); if (ag) ag.onclick = () => { const fee = acctCost(a0); if (fee > coins()) { toast('Not enough coins: need ' + fee); return; } P.coins = coins() - fee; const keep = { id: a0.id, type: a0.type, name: a0.name, cfg: a0.cfg, cond: a0.cond, lev: a0.lev, size0: a0.size0, demo: a0.demo, attempt: (a0.attempt || 1) + 1, payouts: a0.payouts || [], earned: a0.earned || 0 }; const i = P.accts.indexOf(a0); P.accts[i] = acctInit(keep); saveP(); renderStart(); toast('New attempt started'); };
       $('#ac_del').onclick = () => {
         if (a0.demo) { if (confirm('Reset practice balance?')) { const k2 = { id: a0.id, type: a0.type, name: a0.name, cfg: a0.cfg, cond: a0.cond, lev: a0.lev, size0: a0.size0, demo: true, attempt: (a0.attempt || 1) + 1, payouts: [], earned: 0 }; P.accts[P.accts.indexOf(a0)] = acctInit(k2); saveP(); renderStart(); } return; }
