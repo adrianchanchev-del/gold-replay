@@ -302,3 +302,4 @@ body.fschart .dock{padding-bottom:calc(env(safe-area-inset-bottom) + var(--bx,0p
 .wallet{background:#1a1810;border:1px solid #3a3320;border-radius:12px;padding:10px 12px;margin-bottom:12px}
 .wl1{display:flex;align-items:baseline;gap:6px}.coinbig{font-size:26px;font-weight:700;color:#e6c14b}.wlink{margin-left:auto;font-size:12px;color:#8b95a5;text-decoration:underline;cursor:pointer}
 .wallet .pbar i{background:#e6c14b}
+.th2 td,.th2 th{white-space:nowrap}

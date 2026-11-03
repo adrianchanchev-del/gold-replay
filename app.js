@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.24.6', BUILD = 'gr-v48';
+  const APP_VERSION = '0.25.0', BUILD = 'gr-v49';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -2285,6 +2285,7 @@
     $('#view').innerHTML = h + '</div>';
     document.querySelectorAll('[data-stt]').forEach((b) => (b.onclick = () => { P.set.stTab2 = b.dataset.stt; saveP(); renderStats(); }));
     document.querySelectorAll('[data-ss]').forEach((el) => (el.onclick = () => { P.set.sessSel = el.dataset.ss; saveP(); renderStats(); }));
+    const tm = $('#th_more'); if (tm) tm.onclick = () => { histAll = !histAll; renderStats(); };
     const sb = $('#ss_back'); if (sb) sb.onclick = () => { P.set.sessSel = null; saveP(); renderStats(); };
     document.querySelectorAll('[data-df]').forEach((el) => (el.onchange = () => { P.set.dfil = Object.assign(dataFilter(), { [el.dataset.df]: el.value }); saveP(); renderStats(); }));
     document.querySelectorAll('[data-ji]').forEach((el) => (el.onclick = () => editJournal(+el.dataset.ji)));
@@ -2304,7 +2305,7 @@
     }
     if (!L.length) return '<div class="card muted">No sessions yet.</div>';
     return L.map((x) => { const T = P.tlog.filter((t) => String(t.sid) === String(x.key)), net = T.reduce((a, t) => a + t.pnl, 0), w = T.filter((t) => t.pnl > 0).length;
-      return '<div class="card jr" data-ss="' + esc(x.key) + '"><div class="jt"><b>' + fdate(x.t0).slice(0, 16) + (x.live ? ' &middot; current' : '') + '</b><span class="' + (net >= 0 ? 'up' : 'dn') + '">' + fmt(net) + '</span></div><div class="muted sm">' + esc(an(x.acct)) + ' &middot; ' + sessName(x.t0) + ' &middot; ' + T.length + ' trades' + (T.length ? ' &middot; ' + Math.round(w / T.length * 100) + '% WR' : '') + ' &middot; ' + (x.mode === 'end' ? 'after session' : 'every trade') + '</div></div>'; }).join('');
+      return '<div class="card jr" data-ss="' + esc(x.key) + '"><div class="jt"><b>' + fdate(x.t0).slice(0, 16) + (x.live ? ' &middot; current' : '') + '</b><span class="' + (net >= 0 ? 'up' : 'dn') + '">' + fmt(net) + '</span></div><div class="muted sm">' + esc(an(x.acct)) + ' &middot; ' + sessName(x.t0) + ' &middot; ' + T.length + ' trades' + (T.length ? ' &middot; ' + Math.round(w / T.length * 100) + '% WR' : '') + ' &middot; ' + (x.mode === 'end' ? 'after session' : 'every trade') + '</div></div>'; }).join('') + tradeHistory(P.tlog.filter((t) => L.some((x) => String(x.key) === String(t.sid))));
   }
   function statsJournal(J) {
     if (!J.length) return '<div class="card muted">No journal entries yet. They appear after each reviewed trade.</div>';
@@ -2323,6 +2324,15 @@
     const RV = J.map((j, ji) => [j, ji]).filter((x) => x[0].note);
     h += '<h3>Trade reviews</h3>' + (RV.length ? RV.reverse().slice(0, 60).map((x) => '<div class="card jr" data-ji="' + x[1] + '"><div class="jt"><b>' + (x[0].dir > 0 ? 'LONG' : 'SHORT') + '</b> <span class="muted sm">' + fdate(x[0].t0) + '</span><span class="' + (x[0].pnl >= 0 ? 'up' : 'dn') + '">' + x[0].r.toFixed(2) + 'R</span></div><div class="sm">' + esc(x[0].note) + '</div></div>').join('') : '<div class="card muted">No trade reviews yet.</div>');
     return h;
+  }
+  let histAll = false;
+  function tradeHistory(J) {
+    if (!J.length) return '';
+    const rows = J.slice().sort((a, b) => b.t1 - a.t1), shown = histAll ? rows : rows.slice(0, 25), NM = { SL: 'Stop', TP: 'Target', MANUAL: 'Manual', BREACH: 'Rules', WEEKEND: 'Weekend', STOPOUT: 'Stop-out' };
+    const px = (v) => (v == null ? '--' : (+v).toFixed(2));
+    return '<div class="card"><b>Trade history</b> <span class="muted sm">(' + J.length + ' trades, newest first)</span><div style="overflow-x:auto"><table class="dt th2"><tr><th>Closed</th><th>Dir</th><th>Entry</th><th>Exit</th><th>End</th><th>R</th><th>P&amp;L</th></tr>' +
+      shown.map((j) => '<tr><td>' + fdate(j.t1).slice(5, 16) + '</td><td>' + (j.dir > 0 ? 'Long' : 'Short') + '</td><td>' + px(j.entry) + '</td><td>' + px(j.exit) + '</td><td>' + esc(NM[j.reason] || j.reason || '--') + '</td><td class="' + (j.r > 0 ? 'up' : j.r < 0 ? 'dn' : '') + '">' + (j.r == null ? '--' : j.r.toFixed(2)) + '</td><td class="' + (j.pnl > 0 ? 'up' : j.pnl < 0 ? 'dn' : '') + '">' + fmt(j.pnl, 0) + '</td></tr>').join('') + '</table></div>' +
+      (rows.length > 25 ? '<button class="btn ghost" id="th_more" style="margin-top:8px">' + (histAll ? 'Show latest 25' : 'Show all ' + rows.length) + '</button>' : '') + '</div>';
   }
   function statsData(J) {
     const n = J.length, lv = E.levelFor(P.xp), lo = E.xpForLevel(lv), hi = E.xpForLevel(lv + 1);
@@ -2355,7 +2365,7 @@
     const leaks = [['Skipped checklist items', J.filter((j) => j.flags && j.flags.incomplete).length], ['Risked more than plan', J.filter((j) => j.flags && j.flags.risk).length], ['Took below-minimum RR', J.filter((j) => j.flags && j.flags.rr).length], ['Broke daily limits', J.filter((j) => j.flags && j.flags.limits).length], ['Widened a stop', J.filter((j) => j.flags && j.flags.widened).length], ['Closed manually', J.filter((j) => j.flags && j.flags.manual).length], ['Overclaimed in review', J.filter((j) => j.verdict === 'overclaimed').length]].sort((a, b) => b[1] - a[1]);
     h += '<div class="card"><b>Discipline</b>' + rr('Fully on plan (scored trades: ' + scd.length + ')', scd.length ? Math.round(ad / scd.length * 100) + '%' : '--') + rr('Average process score', sc.length ? Math.round(sum(sc, (j) => j.score / j.max * 100) / sc.length) + '%' : '--') + '<h4>Where you leak</h4>' + leaks.map((l) => rr(l[0], l[1], l[1] ? 'dn' : 'up')).join('') + '</div>';
     const ses = P.sessLog || []; if (ses.length) { const sw = ses.filter((x) => x.st.net > 0).length; h += '<div class="card"><b>Sessions</b>' + rr('Sessions played', ses.length) + rr('Profitable sessions', Math.round(sw / ses.length * 100) + '%') + rr('Best / worst session', fmt(Math.max.apply(null, ses.map((x) => x.st.net))) + ' / ' + fmt(Math.min.apply(null, ses.map((x) => x.st.net)))) + '</div>'; }
-    return h;
+    return h + tradeHistory(J);
   }
   function editJournal(i) {
     const j = P.journal[i]; if (!j) return;
