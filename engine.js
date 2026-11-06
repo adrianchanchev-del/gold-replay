@@ -148,17 +148,23 @@
   };
   E.openTrade = function (o) {
     const entry = o.price + (o.dir > 0 ? E.SPREAD / 2 : -E.SPREAD / 2) + o.dir * (o.slip || 0);
-    const sz = E.size(o.balance, o.riskPct, entry, o.sl);
+    // SL/TP are optional: sl may be null (no line, no auto-exit). Sizing still uses a risk
+    // distance either way -- the plan's risk % stays meaningful even with no literal stop.
+    const sl = o.sl == null ? null : o.sl;
+    const sizeSl = sl != null ? sl : (o.sizeSl != null ? o.sizeSl : entry);
+    const sz = E.size(o.balance, o.riskPct, entry, sizeSl);
     return {
       id: Date.now() + '-' + Math.floor(Math.random() * 1e6),
-      dir: o.dir, t0: o.t, entry, sl: o.sl, sl0: o.sl, tp: o.tp, units: sz.units,
+      dir: o.dir, t0: o.t, entry, sl, sl0: sl, tp: o.tp || null, units: sz.units,
       riskUsd: sz.riskUsd, riskPct: o.riskPct, capped: sz.capped, cond: o.cond || null, slipIn: o.slip || 0,
-      rr0: o.tp ? Math.abs(o.tp - entry) / Math.abs(entry - o.sl) : 0,
+      rr0: (o.tp && sl != null) ? Math.abs(o.tp - entry) / Math.abs(entry - sl) : 0,
       check: o.check, note: o.note || '', ctx: o.ctx || {}, widened: false, moved: false,
     };
   };
 
   E.setStop = function (tr, newSl) {
+    if (newSl == null) { tr.moved = true; tr.sl = null; return; }
+    if (tr.sl == null) { tr.sl = newSl; tr.moved = true; return; }
     const oldDist = Math.abs(tr.entry - tr.sl), newDist = Math.abs(tr.entry - newSl);
     const worse = tr.dir > 0 ? newSl < tr.sl : newSl > tr.sl;
     if (worse && newDist > oldDist) tr.widened = true;
@@ -170,10 +176,10 @@
   E.stepTrade = function (tr, i) {
     const b = E.bar(i);
     if (tr.dir > 0) {
-      if (b.l <= tr.sl) return { price: Math.min(b.o, tr.sl), reason: 'SL' };
+      if (tr.sl != null && b.l <= tr.sl) return { price: Math.min(b.o, tr.sl), reason: 'SL' };
       if (tr.tp && b.h >= tr.tp) return { price: Math.max(b.o, tr.tp), reason: 'TP' };
     } else {
-      if (b.h >= tr.sl) return { price: Math.max(b.o, tr.sl), reason: 'SL' };
+      if (tr.sl != null && b.h >= tr.sl) return { price: Math.max(b.o, tr.sl), reason: 'SL' };
       if (tr.tp && b.l <= tr.tp) return { price: Math.min(b.o, tr.tp), reason: 'TP' };
     }
     return null;
@@ -207,12 +213,15 @@
   E.adherence = function (tr, plan) {
     const comp = E.completeness(plan, tr.check);
     const riskOk = tr.riskPct <= plan.risk.pct + 1e-9;
-    const rrOk = tr.rr0 >= plan.risk.minRR - 1e-9;
+    // No TP was ever set for this trade -> there's no target to grade R:R against; not applicable (null), not a fail.
+    const rrOk = tr.tp == null ? null : tr.rr0 >= plan.risk.minRR - 1e-9;
     const limitsOk = !tr.ctx.overTrades && !tr.ctx.dailyBreach;
     const stopOk = !tr.widened;
-    const exitClean = tr.reason === 'SL' || tr.reason === 'TP';
+    // A manual close is "clean" when there was never a mechanical SL/TP to hit in the first place.
+    const exitClean = tr.reason === 'SL' || tr.reason === 'TP' || (tr.sl == null && tr.tp == null && tr.reason === 'MANUAL');
+    const rrPass = rrOk === null ? true : rrOk;
     let level;
-    if (comp >= 1 && riskOk && rrOk && limitsOk && stopOk) level = 2;
+    if (comp >= 1 && riskOk && rrPass && limitsOk && stopOk) level = 2;
     else if (comp < 0.5 || !stopOk) level = 0;
     else level = 1;
     return { comp, riskOk, rrOk, limitsOk, stopOk, exitClean, level };
@@ -227,7 +236,7 @@
     if (must.length) add('Must-have confluences (all)', must.every((x) => ck.conf[x[1]]) ? 1 : 0, 1);
     if (plan.avoid.length) add('Avoided your no-go list (all)', plan.avoid.every((_, i) => ck.avoid[i]) ? 1 : 0, 1);
     add('Risk size within plan', a.riskOk ? 1 : 0, 1);
-    add('Reward : risk met', a.rrOk ? 1 : 0, 1);
+    if (a.rrOk !== null) add('Reward : risk met', a.rrOk ? 1 : 0, 1);
     add('Daily limits respected', a.limitsOk ? 1 : 0, 1);
     add('Clean exit, no stop widening', a.stopOk ? 1 : 0, 1);
     const base = rows.reduce((s, r) => s + r.got, 0), max = rows.reduce((s, r) => s + r.max, 0);

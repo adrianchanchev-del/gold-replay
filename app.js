@@ -4,7 +4,7 @@
   const E = window.Engine, PT = window.Patterns;
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const APP_VERSION = '0.25.0', BUILD = 'gr-v49';
+  const APP_VERSION = '0.25.1', BUILD = 'gr-v50';
   const KEY = 'goldreplay.v1';
   const TFS = [[1, '1m'], [3, '3m'], [5, '5m'], [10, '10m'], [15, '15m'], [30, '30m'], [60, '1h'], [120, '2h'], [240, '4h'], [1440, '1D']];
   const ICON = {
@@ -2026,7 +2026,7 @@
     if (!t) { if (hn) hn.innerHTML = ''; refit(); return; }
     const mk = (price, color, title) => series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title });
     lineObjs.entry = mk(t.entry, '#e6c14b', 'ENTRY');
-    lineObjs.sl = mk(t.sl, '#ef5350', 'SL');
+    if (t.sl != null) lineObjs.sl = mk(t.sl, '#ef5350', 'SL');
     if (t.tp) lineObjs.tp = mk(t.tp, '#26a69a', 'TP');
     if (hn && !hn.firstChild) buildHandles(hn);
     refit();
@@ -2100,9 +2100,10 @@
 
   // ---- level changes ----
   function applyLive(t, sl, tp) {
+    if (sl == null) { t.sl = null; t.sl0 = null; t.tp = tp || null; t.rr0 = 0; return true; } // dropping SL keeps the current size, just removes the line
     const sz = E.size(t.startBal, t.riskPct, t.entry, sl);
     if (!sz.units) return false;
-    t.units = sz.units; t.riskUsd = sz.riskUsd; t.capped = sz.capped; t.sl = sl; t.sl0 = sl; t.tp = tp;
+    t.units = sz.units; t.riskUsd = sz.riskUsd; t.capped = sz.capped; t.sl = sl; t.sl0 = sl; t.tp = tp || null;
     t.rr0 = tp ? Math.abs(tp - t.entry) / Math.abs(t.entry - sl) : 0;
     return true;
   }
@@ -2141,9 +2142,10 @@
     let rp = P.plan.risk.pct; if (ac && ac.cfg && ac.cfg.maxRisk && rp > ac.cfg.maxRisk) { rp = ac.cfg.maxRisk; toast('Risk capped at ' + rp + '% by the account rules'); }
     const slipIn = ac && ac.cond && ac.cond.slip ? slipAmt(E.t(S.cur), ac.cond) : 0;
     const plan = P.plan, px = E.close(S.cur), dist = defaultDist();
-    const sl = +(px - dir * dist).toFixed(2), tp = +(px + dir * (E.SPREAD / 2 + (dist + E.SPREAD / 2) * Math.max(plan.risk.minRR, 1))).toFixed(2);
+    const slCalc = +(px - dir * dist).toFixed(2), tpCalc = +(px + dir * (E.SPREAD / 2 + (dist + E.SPREAD / 2) * Math.max(plan.risk.minRR, 1))).toFixed(2);
+    const sl = (P.set && P.set.noSL) ? null : slCalc, tp = (P.set && P.set.noTP) ? null : tpCalc;
     const over = S.dayTrades >= plan.risk.maxTrades, breach = (S.dayStartBal - S.balance) >= S.dayStartBal * plan.risk.dailyLoss / 100;
-    const tr = E.openTrade({ dir, price: px, sl, tp, balance: S.balance, riskPct: rp, slip: slipIn, cond: tradeCond(ac), t: E.t(S.cur), check: null, note: '', ctx: { overTrades: over, dailyBreach: breach } });
+    const tr = E.openTrade({ dir, price: px, sl, tp, sizeSl: slCalc, balance: S.balance, riskPct: rp, slip: slipIn, cond: tradeCond(ac), t: E.t(S.cur), check: null, note: '', ctx: { overTrades: over, dailyBreach: breach } });
     if (!tr.units) { toast('Position size is zero'); return; }
     tr.startBal = S.balance; tr.i0 = S.cur;
     S.open = tr; S.dayTrades++; S.trades++; if (ac) ac.dTr = S.dayTrades;
@@ -2153,15 +2155,16 @@
   }
   function editStops() {
     pause(); const t = S.open;
-    modal('<h3>Type SL / TP</h3><div class="grid2"><div><label>Stop loss</label><input id="e_sl" type="number" inputmode="decimal" step="0.01" value="' + t.sl + '"></div><div><label>Take profit</label><input id="e_tp" type="number" inputmode="decimal" step="0.01" value="' + (t.tp || '') + '"></div></div>' +
-      '<p class="muted sm">Moving the stop closer is fine. Widening it after the first candle is scored against you.</p><div class="tbtns"><button class="ghost2" id="e_c">Cancel</button><button class="buy" id="e_s">Save</button></div>');
+    modal('<h3>Type SL / TP</h3><div class="grid2"><div><label>Stop loss</label><input id="e_sl" type="number" inputmode="decimal" step="0.01" value="' + (t.sl == null ? '' : t.sl) + '" placeholder="none"></div><div><label>Take profit</label><input id="e_tp" type="number" inputmode="decimal" step="0.01" value="' + (t.tp || '') + '" placeholder="none"></div></div>' +
+      '<p class="muted sm">Leave a field blank for no SL/TP on that side \u2014 you\'ll manage the exit by hand. Moving the stop closer is fine. Widening it after the first candle is scored against you.</p><div class="tbtns"><button class="ghost2" id="e_c">Cancel</button><button class="buy" id="e_s">Save</button></div>');
     $('#e_c').onclick = closeModal;
     $('#e_s').onclick = () => {
-      const sl = +$('#e_sl').value, tp = +$('#e_tp').value || null, px = E.close(S.cur);
-      if (!(t.dir > 0 ? sl < px : sl > px)) { toast('Stop would trigger immediately'); return; }
-      if (tp && !(t.dir > 0 ? tp > px : tp < px)) { toast('Target is on the wrong side'); return; }
+      const slRaw = $('#e_sl').value, tpRaw = $('#e_tp').value, px = E.close(S.cur);
+      const sl = slRaw === '' ? null : +slRaw, tp = tpRaw === '' ? null : +tpRaw;
+      if (sl != null && !(t.dir > 0 ? sl < px : sl > px)) { toast('Stop would trigger immediately'); return; }
+      if (tp != null && !(t.dir > 0 ? tp > px : tp < px)) { toast('Target is on the wrong side'); return; }
       if (sl !== t.sl) setSL(t, sl);
-      if (tp && tp !== t.tp) setTP(t, tp);
+      if (tp !== t.tp) setTP(t, tp);
       closeModal(); drawLines(); updateOpenPanel(); saveP();
     };
   }
@@ -2221,7 +2224,7 @@
     if (coinGain) { P.coins = coins() + coinGain; P.coinsEarned = (P.coinsEarned || 0) + coinGain; }
     if (sc.honesty >= 1) P.honest++;
     P.journal.push({ t0: t.t0, t1: t.t1, dir: t.dir, entry: t.entry, exit: t.exit, units: t.units, pnl: t.pnl, r: t.r, reason: t.reason, score: sc.total, max: sc.max, bonus: sc.bonus, honesty: sc.honesty, verdict: sc.verdict, said, level: sc.mistake ? 1 : 2,
-      flags: { incomplete: sc.adherence.comp < 1, risk: !sc.adherence.riskOk, rr: !sc.adherence.rrOk, limits: !sc.adherence.limitsOk, widened: !sc.adherence.stopOk, manual: t.reason === 'MANUAL' }, note, why: t.note, comp: sc.adherence.comp });
+      flags: { incomplete: sc.adherence.comp < 1, risk: !sc.adherence.riskOk, rr: sc.adherence.rrOk === false, limits: !sc.adherence.limitsOk, widened: !sc.adherence.stopOk, manual: t.reason === 'MANUAL' }, note, why: t.note, comp: sc.adherence.comp });
     if (P.journal.length > 600) P.journal.shift();
     { const tl = (P.tlog || []).find((x) => x.id === t.id); if (tl) { const jj = P.journal[P.journal.length - 1]; Object.assign(tl, { score: jj.score, max: jj.max, level: jj.level, flags: jj.flags, verdict: jj.verdict, honesty: jj.honesty, mode: 'trade' }); } }
     P.sessionsDone = P.sessionsDone || 0; saveP();
@@ -2430,6 +2433,9 @@
       '<div class="tbtns"><button class="ghost2" id="v_check">Check for update</button><button class="close" id="v_force">Force refresh</button></div></div>' +
       '<div class="card"><b>Data</b><div class="muted sm" style="margin-top:4px">Spot gold XAUUSD (Dukascopy bid), 1-minute, prices to 2 decimals, UTC.<br>' + fdate(ft) + ' to ' + fdate(lt) + '<br>' + nd + ' trading days. More days are added automatically.</div></div>' +
       '<div class="card"><b>Replay defaults</b><label>Starting chart timeframe</label><select id="st_tf">' + tfOpts + '</select><label>Chart crosshair (follows your finger)</label><select id="st_cr"><option value="0"' + (P.set.cross ? '' : ' selected') + '>Off</option><option value="1"' + (P.set.cross ? ' selected' : '') + '>On</option></select><label>Bottom edge (Home Screen app: raise until the gap is filled)</label><select id="st_bx">' + [0, 10, 20, 30, 40].map((v) => '<option value="' + v + '"' + ((P.set.bx || 0) === v ? ' selected' : '') + '>' + (v ? '+' + v + ' px' : 'Default') + '</option>').join('') + '</select><label>Starting playback speed</label><select id="st_sp">' + spOpts + '</select>' +
+      '<label>Stop-loss on new trades</label><select id="st_sl"><option value="1"' + (P.set.noSL ? '' : ' selected') + '>Required</option><option value="0"' + (P.set.noSL ? ' selected' : '') + '>Optional (off by default)</option></select>' +
+      '<label>Take-profit on new trades</label><select id="st_tp"><option value="1"' + (P.set.noTP ? '' : ' selected') + '>Required</option><option value="0"' + (P.set.noTP ? ' selected' : '') + '>Optional (off by default)</option></select>' +
+      '<p class="muted sm">When off, BUY/SELL opens with no line on the chart for that level \u2014 you manage the exit by hand. Size is still based on your risk % as usual. You can still add one later from SL/TP on an open trade.</p>' +
       '<button class="btn ghost" id="st_ind" style="margin-top:12px">Indicators&hellip;</button></div>' +
       '<div class="card"><b>Plan pictures</b><p class="muted sm">Screenshots or photos of your written plan or setups. Kept on this device.</p><div class="thumbs">' + imgs.map((d, i) => '<div class="th"><img src="' + d + '" data-view="' + i + '"><button class="x" data-rmimg="' + i + '">&times;</button></div>').join('') + '</div>' +
       '<button class="btn ghost" id="p_addimg">+ Add pictures</button><input type="file" id="p_imgfile" accept="image/*" multiple hidden></div>' +
@@ -2442,6 +2448,8 @@
     $('#st_cr').onchange = () => { P.set.cross = $('#st_cr').value === '1'; saveP(); toast('Saved'); };
     $('#st_bx').onchange = () => { P.set.bx = +$('#st_bx').value; saveP(); applyBx(); toast('Saved'); };
     $('#st_sp').onchange = () => { P.set.speed = +$('#st_sp').value; speedI = P.set.speed; saveP(); toast('Saved'); };
+    $('#st_sl').onchange = () => { P.set.noSL = $('#st_sl').value === '0'; saveP(); toast('Saved'); };
+    $('#st_tp').onchange = () => { P.set.noTP = $('#st_tp').value === '0'; saveP(); toast('Saved'); };
     $('#st_ind').onclick = openInd; bindKbUI();
     $('#p_addimg').onclick = () => $('#p_imgfile').click();
     $('#p_imgfile').onchange = async (e) => {
